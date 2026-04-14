@@ -1,0 +1,3 @@
+arc files are only used as a reference list for counties. converted to csv, cleaned, and that's it.
+
+egrid dataset: used data from the plant tab, looked at noncombustible as a share of total

@@ -142,14 +142,29 @@ county_energy <- load_egrid_year(analysis_year)
 ```
 
 5. Build Analysis Datasets
-We combine income and energy data.
+We use `county_energy` as the base dataset, then join income data.
 ```{r}
-analysis_aligned <- income_aligned_app |>
-  inner_join(county_energy, by = c("GEOID" = "fips")) |>
+analysis_county_energy <- county_energy |>
+  inner_join(
+    income_aligned_app |>
+      select(GEOID, median_income) |>
+      rename(median_income_aligned = median_income),
+    by = c("fips" = "GEOID")
+  ) |>
+  left_join(
+    income_lagged_app |>
+      select(GEOID, median_income) |>
+      rename(median_income_lagged = median_income),
+    by = c("fips" = "GEOID")
+  )
+
+# Kept for earlier correlation sections
+analysis_aligned <- analysis_county_energy |>
+  rename(median_income = median_income_aligned) |>
   drop_na()
 
-analysis_lagged <- income_lagged_app |>
-  inner_join(county_energy, by = c("GEOID" = "fips")) |>
+analysis_lagged <- analysis_county_energy |>
+  rename(median_income = median_income_lagged) |>
   drop_na()
 ```
 
@@ -197,7 +212,7 @@ Linear regression
 ```
 
 8. Change in non-fossil share vs median household income
-We take eGRID non-combustion share at `egrid_change_baseline_year` and at `analysis_year`, compute the county-level change, and correlate it with median household income from `income_aligned` (same object as above: ACS `B19013_001` for `analysis_year`), restricted to the selected geography via `income_aligned_app`.
+We take eGRID non-combustion share at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change, and join it directly onto `analysis_county_energy` (which is based on `county_energy` and already includes income columns).
 ```{r}
 county_energy_baseline <- load_egrid_year(egrid_change_baseline_year)
 
@@ -210,9 +225,11 @@ energy_share_change <- county_energy_baseline |>
   ) |>
   mutate(non_fossil_share_change = share_end - share_baseline)
 
-analysis_energy_change <- income_aligned_app |>
-  inner_join(energy_share_change, by = c("GEOID" = "fips")) |>
-  drop_na(median_income, non_fossil_share_change)
+analysis_county_energy <- analysis_county_energy |>
+  inner_join(energy_share_change, by = "fips")
+
+analysis_energy_change <- analysis_county_energy |>
+  drop_na(median_income_aligned, non_fossil_share_change)
 ```
 
 ```{r}
@@ -230,18 +247,18 @@ cat(
 cat("============================\n")
 
 cor_change <- cor.test(
-  analysis_energy_change$median_income,
+  analysis_energy_change$median_income_aligned,
   analysis_energy_change$non_fossil_share_change,
   method = "pearson"
 )
 print(cor_change)
 
-model_change <- lm(non_fossil_share_change ~ median_income, data = analysis_energy_change)
+model_change <- lm(non_fossil_share_change ~ median_income_aligned, data = analysis_energy_change)
 print(summary(model_change))
 ```
 
 ```{r}
-ggplot(analysis_energy_change, aes(x = median_income, y = non_fossil_share_change)) +
+ggplot(analysis_energy_change, aes(x = median_income_aligned, y = non_fossil_share_change)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = TRUE) +
   labs(
@@ -260,11 +277,11 @@ ggplot(analysis_energy_change, aes(x = median_income, y = non_fossil_share_chang
   theme_minimal()
 ```
 
-9. Choropleth: change in non-fossil generation (MWh)
+9. Choropleth: change in non-fossil share
 
-Counties are restricted to `geography_df` and to counties with eGRID plant data in both `egrid_change_baseline_year` and `analysis_year` (same filters as `load_egrid_year`). Fill is end-year minus baseline non-fossil generation (MWh).
+Fill is `non_fossil_share_change` from `analysis_energy_change`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
 
-```{r map-nf-gen-change-build}
+```{r map-nf-share-change-build}
 state_fips <- geography_df |>
   mutate(state_fips = str_sub(fips, 1, 2)) |>
   distinct(state_fips) |>
@@ -273,47 +290,36 @@ state_fips <- geography_df |>
 counties_sf <- counties(state = state_fips, cb = TRUE, year = 2020) |>
   st_transform(crs = 5070)
 
-chg_nf_gen <- geography_df |>
-  select(fips) |>
+counties_map_change <- counties_sf |>
   inner_join(
-    county_energy_baseline |>
-      select(fips, non_fossil_gen) |>
-      rename(non_fossil_gen_baseline = non_fossil_gen),
-    by = "fips"
-  ) |>
-  inner_join(
-    county_energy |>
-      select(fips, non_fossil_gen) |>
-      rename(non_fossil_gen_end = non_fossil_gen),
-    by = "fips"
-  ) |>
-  mutate(non_fossil_gen_change = non_fossil_gen_end - non_fossil_gen_baseline)
-
-counties_map_nf <- counties_sf |>
-  inner_join(chg_nf_gen, by = c("GEOID" = "fips"))
+    analysis_energy_change |>
+      select(fips, non_fossil_share_change),
+    by = c("GEOID" = "fips")
+  )
 ```
 
-```{r map-nf-gen-change-plot}
-ggplot(counties_map_nf, aes(fill = non_fossil_gen_change)) +
-  geom_sf(color = "grey35", linewidth = 0.08) +
+```{r map-nf-share-change-plot}
+ggplot() +
+  geom_sf(data = counties_sf, fill = "grey95", color = "grey80", linewidth = 0.05) +
+  geom_sf(data = counties_map_change, aes(fill = non_fossil_share_change), color = "grey35", linewidth = 0.08) +
   scale_fill_gradient2(
     low = "#b35806",
     mid = "#f7f7f7",
     high = "#542788",
     midpoint = 0,
-    name = "Δ Non-fossil\ngeneration (MWh)",
-    labels = scales::label_comma()
+    name = "Change in\nnon-fossil share",
+    labels = scales::label_percent(accuracy = 0.1)
   ) +
   theme_void() +
   theme(legend.position = "right") +
   labs(
     title = paste0(
-      "Change in non-fossil generation (MWh), ",
+      "Change in non-fossil share, ",
       egrid_change_baseline_year,
       "–",
       analysis_year
     ),
-    subtitle = "Counties in selected geography with eGRID plants in both years",
-    caption = "Non-fossil generation from eGRID (plant-level), summed by county."
+    subtitle = "Colored counties are analysis counties; grey counties provide surrounding-area context",
+    caption = "Fill uses analysis_energy_change$non_fossil_share_change."
   )
 ```
