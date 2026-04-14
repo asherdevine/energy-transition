@@ -1,0 +1,319 @@
+---
+title: "ashers census project"
+output: html_document
+date: "2026-03-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Overview
+
+Notes:
+-change census api key install = to TRUE if you want to install my API key. or use your own idk if it matters
+-the geography csv just provides a list of counties
+-right now it's looking at non-combustible energy as a share of total energy production (both columns that just exist in the egrid dataset 😍)
+-you can't have the excel file open while the program is looking at it (workbooks live in the `egrid files` folder)
+
+
+1. Setup
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidycensus)
+library(tidyverse)
+library(sf)
+library(tigris)
+library(readxl)
+library(janitor)
+library(spdep)
+library(ggplot2)
+
+options(tigris_use_cache = TRUE)
+
+# CONFIGURE GEOGRAPHY HERE
+# Options: "arc" (Appalachian Regional Commission), 
+#          "msa" (Metropolitan Statistical Areas), 
+#          "state" (individual states), etc.
+#geography_type <- "subregions"
+geography_file <- "geography.csv"  # File with county list for selected geography
+
+# CONFIGURE SUBREGION HERE
+# Change this to analyze different subregions
+#target_subregion <- "Central"
+
+# CONFIGURE ANALYSIS YEAR HERE
+# Change this to analyze different years (must be available in both ACS and eGRID)
+analysis_year <- 2021
+
+# Baseline year for "change in non-fossil share" analysis (end year is analysis_year)
+egrid_change_baseline_year <- 2016
+
+```
+
+2. Load Geography Data
+We load selected geography's county list and filter by subregion.
+```{r}
+geography_df <- read_csv(geography_file) |>
+  clean_names() |>
+#  filter(subregion == target_subregion) |>
+  mutate(fips = str_pad(fips, 5, pad = "0"))
+```
+
+3. Income Data (ACS)
+We use median household income (B19013_001).
+Why two versions?
+Aligned (analysis_year): Matches eGRID data → best for correlation
+Lagged (analysis_year-2): Income precedes energy → tests robustness
+```{r}
+census_api_key("0b99bc09077560a4ae65416a235a4f0910a40637", install = FALSE)
+
+# Aligned dataset
+income_aligned <- get_acs(
+  geography = "county",
+  variables = "B19013_001",
+  year = analysis_year,
+  survey = "acs5"
+) |>
+  select(GEOID, estimate) |>
+  rename(median_income = estimate)
+
+# Lagged dataset (sensitivity test)
+income_lagged <- get_acs(
+  geography = "county",
+  variables = "B19013_001",
+  year = analysis_year - 2,
+  survey = "acs5"
+) |>
+  select(GEOID, estimate) |>
+  rename(median_income = estimate)
+
+# Restrict to selected geography
+income_aligned_app <- income_aligned |>
+  inner_join(geography_df, by = c("GEOID" = "fips"))
+
+income_lagged_app <- income_lagged |>
+  inner_join(geography_df, by = c("GEOID" = "fips"))
+```
+
+4. eGRID Data (Energy Production)
+We load plant-level generation for `analysis_year`, aggregate to county, and compute non-combustion + biomass share. Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
+```{r}
+load_egrid_year <- function(year) {
+  file_name <- file.path("egrid files", paste0("eGRID", year, "_data.xlsx"))
+  sheets <- excel_sheets(file_name)
+  yy <- sprintf("%02d", year %% 100)
+  sheet_plnt <- paste0("PLNT", yy)
+  sheet_egrd <- paste0("EGRDPLNT", yy)
+  sheet_name <- if (sheet_plnt %in% sheets) {
+    sheet_plnt
+  } else if (sheet_egrd %in% sheets) {
+    sheet_egrd
+  } else {
+    stop(
+      "No plant sheet ", sheet_plnt, " or ", sheet_egrd, " in ", file_name,
+      ". Available: ", paste(sheets, collapse = ", ")
+    )
+  }
+
+  plants <- read_excel(file_name, sheet = sheet_name, skip = 1) |>
+    clean_names() |>
+    filter(!is.na(fipsst), !is.na(fipscnty), plngenan > 0) |>
+    mutate(
+      fips = str_c(str_pad(fipsst, 2, pad = "0"), str_pad(fipscnty, 3, pad = "0")),
+      total_gen = plngenan,
+      non_fossil_gen = plgenacn + plgenabm,
+      year = year
+    )
+
+  county_energy_year <- plants |>
+    group_by(fips, year) |>
+    summarise(
+      total_gen = sum(total_gen, na.rm = TRUE),
+      non_fossil_gen = sum(non_fossil_gen, na.rm = TRUE)
+    ) |>
+    mutate(non_fossil_share = non_fossil_gen / total_gen) |>
+    filter(total_gen > 0)
+
+  county_energy_year
+}
+
+county_energy <- load_egrid_year(analysis_year)
+```
+
+5. Build Analysis Datasets
+We combine income and energy data.
+```{r}
+analysis_aligned <- income_aligned_app |>
+  inner_join(county_energy, by = c("GEOID" = "fips")) |>
+  drop_na()
+
+analysis_lagged <- income_lagged_app |>
+  inner_join(county_energy, by = c("GEOID" = "fips")) |>
+  drop_na()
+```
+
+6. Correlation and Regression
+We estimate:
+Pearson correlation
+Linear regression
+```{r}
+# run_analysis <- function(df, label) {
+#   cat("\n============================\n")
+#   cat("RESULTS:", label, "\n")
+#   cat("============================\n")
+# 
+#   cor_res <- cor.test(
+#     df$median_income,
+#     df$non_fossil_share,
+#     method = "pearson"
+#   )
+#   print(cor_res)
+# 
+#   model <- lm(non_fossil_share ~ median_income, data = df)
+#   print(summary(model))
+# }
+# 
+# run_analysis(analysis_aligned, paste("Aligned (", analysis_year, ")"))
+# run_analysis(analysis_lagged, paste("Lagged (", analysis_year-2, ")"))
+```
+
+7. Visualization
+```{r}
+# plot_fn <- function(df, title) {
+#   ggplot(df, aes(x = median_income, y = non_fossil_share)) +
+#     geom_point(alpha = 0.3) +
+#     geom_smooth(method = "lm", se = TRUE) +
+#     labs(
+#       title = title,
+#       x = "Median Household Income",
+#       y = "Non-Fossil Energy Share"
+#     ) +
+#     theme_minimal()
+# }
+# 
+# plot_fn(analysis_aligned, paste("Aligned Income vs Energy (", analysis_year, ")"))
+# plot_fn(analysis_lagged, paste("Lagged Income vs Energy (", analysis_year-2, ")"))
+```
+
+8. Change in non-fossil share vs median household income
+We take eGRID non-combustion share at `egrid_change_baseline_year` and at `analysis_year`, compute the county-level change, and correlate it with median household income from `income_aligned` (same object as above: ACS `B19013_001` for `analysis_year`), restricted to the selected geography via `income_aligned_app`.
+```{r}
+county_energy_baseline <- load_egrid_year(egrid_change_baseline_year)
+
+energy_share_change <- county_energy_baseline |>
+  select(fips, non_fossil_share) |>
+  rename(share_baseline = non_fossil_share) |>
+  inner_join(
+    county_energy |> select(fips, non_fossil_share) |> rename(share_end = non_fossil_share),
+    by = "fips"
+  ) |>
+  mutate(non_fossil_share_change = share_end - share_baseline)
+
+analysis_energy_change <- income_aligned_app |>
+  inner_join(energy_share_change, by = c("GEOID" = "fips")) |>
+  drop_na(median_income, non_fossil_share_change)
+```
+
+```{r}
+cat("\n============================\n")
+cat(
+  "CHANGE ANALYSIS: non-fossil share (",
+  egrid_change_baseline_year,
+  " → ",
+  analysis_year,
+  ") vs median household income (ACS ",
+  analysis_year,
+  ", B19013_001)\n",
+  sep = ""
+)
+cat("============================\n")
+
+cor_change <- cor.test(
+  analysis_energy_change$median_income,
+  analysis_energy_change$non_fossil_share_change,
+  method = "pearson"
+)
+print(cor_change)
+
+model_change <- lm(non_fossil_share_change ~ median_income, data = analysis_energy_change)
+print(summary(model_change))
+```
+
+```{r}
+ggplot(analysis_energy_change, aes(x = median_income, y = non_fossil_share_change)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = paste0(
+      "Change in non-fossil share (",
+      egrid_change_baseline_year,
+      "–",
+      analysis_year,
+      ") vs median household income (",
+      analysis_year,
+      " ACS)"
+    ),
+    x = "Median household income (B19013_001)",
+    y = "Change in non-fossil generation share"
+  ) +
+  theme_minimal()
+```
+
+9. Choropleth: change in non-fossil generation (MWh)
+
+Counties are restricted to `geography_df` and to counties with eGRID plant data in both `egrid_change_baseline_year` and `analysis_year` (same filters as `load_egrid_year`). Fill is end-year minus baseline non-fossil generation (MWh).
+
+```{r map-nf-gen-change-build}
+state_fips <- geography_df |>
+  mutate(state_fips = str_sub(fips, 1, 2)) |>
+  distinct(state_fips) |>
+  pull(state_fips)
+
+counties_sf <- counties(state = state_fips, cb = TRUE, year = 2020) |>
+  st_transform(crs = 5070)
+
+chg_nf_gen <- geography_df |>
+  select(fips) |>
+  inner_join(
+    county_energy_baseline |>
+      select(fips, non_fossil_gen) |>
+      rename(non_fossil_gen_baseline = non_fossil_gen),
+    by = "fips"
+  ) |>
+  inner_join(
+    county_energy |>
+      select(fips, non_fossil_gen) |>
+      rename(non_fossil_gen_end = non_fossil_gen),
+    by = "fips"
+  ) |>
+  mutate(non_fossil_gen_change = non_fossil_gen_end - non_fossil_gen_baseline)
+
+counties_map_nf <- counties_sf |>
+  inner_join(chg_nf_gen, by = c("GEOID" = "fips"))
+```
+
+```{r map-nf-gen-change-plot}
+ggplot(counties_map_nf, aes(fill = non_fossil_gen_change)) +
+  geom_sf(color = "grey35", linewidth = 0.08) +
+  scale_fill_gradient2(
+    low = "#b35806",
+    mid = "#f7f7f7",
+    high = "#542788",
+    midpoint = 0,
+    name = "Δ Non-fossil\ngeneration (MWh)",
+    labels = scales::label_comma()
+  ) +
+  theme_void() +
+  theme(legend.position = "right") +
+  labs(
+    title = paste0(
+      "Change in non-fossil generation (MWh), ",
+      egrid_change_baseline_year,
+      "–",
+      analysis_year
+    ),
+    subtitle = "Counties in selected geography with eGRID plants in both years",
+    caption = "Non-fossil generation from eGRID (plant-level), summed by county."
+  )
+```
