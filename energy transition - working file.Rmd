@@ -158,60 +158,9 @@ analysis_county_energy <- county_energy |>
     by = c("fips" = "GEOID")
   )
 
-# Kept for earlier correlation sections
-analysis_aligned <- analysis_county_energy |>
-  rename(median_income = median_income_aligned) |>
-  drop_na()
-
-analysis_lagged <- analysis_county_energy |>
-  rename(median_income = median_income_lagged) |>
-  drop_na()
 ```
 
-6. Correlation and Regression
-We estimate:
-Pearson correlation
-Linear regression
-```{r}
-# run_analysis <- function(df, label) {
-#   cat("\n============================\n")
-#   cat("RESULTS:", label, "\n")
-#   cat("============================\n")
-# 
-#   cor_res <- cor.test(
-#     df$median_income,
-#     df$non_fossil_share,
-#     method = "pearson"
-#   )
-#   print(cor_res)
-# 
-#   model <- lm(non_fossil_share ~ median_income, data = df)
-#   print(summary(model))
-# }
-# 
-# run_analysis(analysis_aligned, paste("Aligned (", analysis_year, ")"))
-# run_analysis(analysis_lagged, paste("Lagged (", analysis_year-2, ")"))
-```
-
-7. Visualization
-```{r}
-# plot_fn <- function(df, title) {
-#   ggplot(df, aes(x = median_income, y = non_fossil_share)) +
-#     geom_point(alpha = 0.3) +
-#     geom_smooth(method = "lm", se = TRUE) +
-#     labs(
-#       title = title,
-#       x = "Median Household Income",
-#       y = "Non-Fossil Energy Share"
-#     ) +
-#     theme_minimal()
-# }
-# 
-# plot_fn(analysis_aligned, paste("Aligned Income vs Energy (", analysis_year, ")"))
-# plot_fn(analysis_lagged, paste("Lagged Income vs Energy (", analysis_year-2, ")"))
-```
-
-8. Change in non-fossil share vs median household income
+6. Change in non-fossil share vs median household income
 We take eGRID non-combustion share at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change, and join it directly onto `analysis_county_energy` (which is based on `county_energy` and already includes income columns).
 ```{r}
 county_energy_baseline <- load_egrid_year(egrid_change_baseline_year)
@@ -277,8 +226,7 @@ ggplot(analysis_energy_change, aes(x = median_income_aligned, y = non_fossil_sha
   theme_minimal()
 ```
 
-9. Choropleth: change in non-fossil share
-
+7. Choropleth: change in non-fossil share
 Fill is `non_fossil_share_change` from `analysis_energy_change`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
 
 ```{r map-nf-share-change-build}
@@ -325,7 +273,7 @@ ggplot() +
 ```
 
 
-11. Partisanship vs change in non-fossil share
+8. Partisanship vs change in non-fossil share
 
 ```{r partisanship-join-and-plot}
 # Load .rda into an isolated environment so we can inspect objects safely
@@ -388,7 +336,7 @@ ggplot(
   theme_minimal()
 ```
 
-12. Metro vs micro vs rural (Census CBSA delineations)
+9. Metro vs micro vs rural (Census CBSA delineations)
 
 ```{r metro-micro-mean-sd-plot}
 # Get metro/micro geographies from ACS via tidycensus
