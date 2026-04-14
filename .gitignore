@@ -1,0 +1,16 @@
+# R template (based on gitignore.io / GitHub community defaults)
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+
+# RStudio files
+.Rproj.user/
+
+# Quarto/R Markdown render outputs and caches
+*_cache/
+*.utf8.md
+*.knit.md
+
+# Project-specific raw data
+egrid files/
