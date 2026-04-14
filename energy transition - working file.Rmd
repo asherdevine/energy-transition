@@ -303,9 +303,9 @@ ggplot() +
   geom_sf(data = counties_sf, fill = "grey95", color = "grey80", linewidth = 0.05) +
   geom_sf(data = counties_map_change, aes(fill = non_fossil_share_change), color = "grey35", linewidth = 0.08) +
   scale_fill_gradient2(
-    low = "#b35806",
+    low = "#7F2B0A",
     mid = "#f7f7f7",
-    high = "#542788",
+    high = "#3B8132",
     midpoint = 0,
     name = "Change in\nnon-fossil share",
     labels = scales::label_percent(accuracy = 0.1)
@@ -322,4 +322,139 @@ ggplot() +
     subtitle = "Colored counties are analysis counties; grey counties provide surrounding-area context",
     caption = "Fill uses analysis_energy_change$non_fossil_share_change."
   )
+```
+
+
+11. Partisanship vs change in non-fossil share
+
+```{r partisanship-join-and-plot}
+# Load .rda into an isolated environment so we can inspect objects safely
+partisan_env <- new.env(parent = emptyenv())
+load("NaNDA partisanship.rda", envir = partisan_env)
+
+partisan_candidates <- ls(partisan_env)
+partisan_tbl <- NULL
+
+for (nm in partisan_candidates) {
+  obj <- get(nm, envir = partisan_env)
+  if (is.data.frame(obj) && "PARTISAN_INDEX_DEM" %in% names(obj)) {
+    partisan_tbl <- obj
+    break
+  }
+}
+
+if (is.null(partisan_tbl)) {
+  stop("No data frame with PARTISAN_INDEX_DEM found in NaNDA partisanship.rda")
+}
+
+fips_col_candidates <- c("STCOFIPS10", "FIPS", "GEOID", "geoid", "county_fips", "COUNTY_FIPS")
+fips_col <- intersect(fips_col_candidates, names(partisan_tbl))
+
+if (length(fips_col) == 0) {
+  stop("Could not find a county ID column (e.g., fips/GEOID) in partisanship data")
+}
+
+partisan_join <- partisan_tbl |>
+  transmute(
+    fips = str_pad(as.character(.data[[fips_col[1]]]), 5, pad = "0"),
+    PARTISAN_INDEX_DEM = as.numeric(PARTISAN_INDEX_DEM)
+  )
+
+analysis_partisanship <- analysis_energy_change |>
+  left_join(partisan_join, by = "fips")
+
+ggplot(
+  analysis_partisanship |> drop_na(PARTISAN_INDEX_DEM, non_fossil_share_change),
+  aes(x = PARTISAN_INDEX_DEM, y = non_fossil_share_change)
+) +
+  geom_point(alpha = 0.35) +
+  geom_smooth(method = "lm", se = TRUE) +
+  scale_x_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.2),
+    labels = scales::label_number(accuracy = 0.1)
+  ) +
+  labs(
+    title = paste0(
+      "Partisan index vs change in non-fossil share (",
+      egrid_change_baseline_year,
+      "–",
+      analysis_year,
+      ")"
+    ),
+    x = "PARTISAN_INDEX_DEM (0 to 1)",
+    y = "Change in non-fossil generation share"
+  ) +
+  theme_minimal()
+```
+
+12. Metro vs micro vs rural (Census CBSA delineations)
+
+```{r metro-micro-mean-sd-plot}
+# Get metro/micro geographies from ACS via tidycensus
+cbsa_sf <- get_acs(
+  geography = "metropolitan statistical area/micropolitan statistical area",
+  variables = "B01001_001",
+  year = analysis_year,
+  survey = "acs5",
+  geometry = TRUE
+) |>
+  st_transform(crs = 5070) |>
+  mutate(
+    cbsa_type = case_when(
+      str_detect(NAME, "Metro Area") ~ "Metropolitan",
+      str_detect(NAME, "Micro Area") ~ "Micropolitan",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  select(cbsa_type)
+
+# Classify counties by whether their interior point lies in a metro/micro CBSA polygon
+county_cbsa <- counties_sf |>
+  st_point_on_surface() |>
+  st_join(cbsa_sf, join = st_within, left = TRUE) |>
+  st_drop_geometry() |>
+  transmute(
+    fips = GEOID,
+    cbsa_type = replace_na(cbsa_type, "Rural")
+  )
+
+analysis_cbsa <- analysis_energy_change |>
+  left_join(county_cbsa, by = "fips") |>
+  mutate(
+    county_type = cbsa_type,
+    county_type = factor(county_type, levels = c("Metropolitan", "Micropolitan", "Rural"))
+  )
+
+cbsa_summary <- analysis_cbsa |>
+  group_by(county_type) |>
+  summarise(
+    n = n(),
+    mean_change = mean(non_fossil_share_change, na.rm = TRUE),
+    sd_change = sd(non_fossil_share_change, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  geom_errorbar(
+    aes(ymin = mean_change - sd_change, ymax = mean_change + sd_change),
+    width = 0.18,
+    linewidth = 0.6
+  ) +
+  scale_y_continuous(labels = scales::label_percent(accuracy = 0.1)) +
+  scale_fill_manual(values = c("Metropolitan" = "#E63400", "Micropolitan" = "#FF8B0F", "Rural" = "#6C3400")) +
+  labs(
+    title = paste0(
+      "Mean change in non-fossil share by county CBSA type, ",
+      egrid_change_baseline_year,
+      "–",
+      analysis_year
+    ),
+    subtitle = "Error bars show +/- 1 standard deviation",
+    x = NULL,
+    y = "Mean change in non-fossil generation share",
+    caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
+  ) +
+  theme_minimal()
 ```

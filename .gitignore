@@ -14,3 +14,5 @@
 
 # Project-specific raw data
 egrid files/
+.CBSAs.xlsx
+.NaNDA partisanship.rda
