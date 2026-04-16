@@ -53,12 +53,15 @@ egrid_change_baseline_year <- 2016
 # Options:
 #  - "renewable_mwh": change in renewable generation (MWh) (plgenacn + plgenabm)
 #  - "co2_tons":      change in CO2 emissions (tons) (plco2an)
-energy_var <- "renewable_mwh"
+#  - "COAL":          change in generation from coal (MWh) (plgenacl)
+energy_var <- "COAL"
 
 energy_label <- if (energy_var == "renewable_mwh") {
-  "Change in renewable generation (MWh)"
-} else {
+  "Change in generation from renewables (MWh)"
+} else if (energy_var == "co2_tons") {
   "Change in annual CO2 emissions (tons)"
+} else { 
+  "Change in generation from coal (MWh)"
 }
 
 ```
@@ -111,7 +114,7 @@ income_lagged_app <- income_lagged |>
 4. eGRID Data (Energy Change)
 We load plant-level eGRID data for the baseline and analysis years, aggregate to county, and compute change in the selected energy variable (`energy_var`). Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
 ```{r}
-load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewable_mwh", "co2_tons")) {
+load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewable_mwh", "co2_tons", "COAL")) {
   energy_var <- match.arg(energy_var)
 
   load_plants_for_year <- function(year, energy_var) {
@@ -144,6 +147,9 @@ load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewa
     } else if (energy_var == "co2_tons") {
       plants <- plants |>
         mutate(energy_value = plco2an)
+    } else if (energy_var == "COAL") {
+      plants <- plants |>
+        mutate(energy_value = plgenacl)
     }
 
     plants |>
