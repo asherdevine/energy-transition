@@ -13,7 +13,7 @@ Overview
 Notes:
 -change census api key install = to TRUE if you want to install my API key. or use your own idk if it matters
 -the geography csv just provides a list of counties
--right now it's looking at non-combustible energy as a share of total energy production (both columns that just exist in the egrid dataset 😍)
+-right now it's looking at plant annual CO2 emissions (`plco2an`) summed to a county level
 -you can't have the excel file open while the program is looking at it (workbooks live in the `egrid files` folder)
 
 
@@ -46,7 +46,7 @@ geography_file <- "geography.csv"  # File with county list for selected geograph
 # Change this to analyze different years (must be available in both ACS and eGRID)
 analysis_year <- 2021
 
-# Baseline year for "change in non-fossil share" analysis (end year is analysis_year)
+# Baseline year for "change in plant annual CO2 emissions" analysis (end year is analysis_year)
 egrid_change_baseline_year <- 2016
 
 ```
@@ -96,8 +96,8 @@ income_lagged_app <- income_lagged |>
   inner_join(geography_df, by = c("GEOID" = "fips"))
 ```
 
-4. eGRID Data (Energy Production)
-We load plant-level generation for `analysis_year`, aggregate to county, and compute non-combustion + biomass share. Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
+4. eGRID Data (Annual CO2 Emissions)
+We load plant-level annual CO2 emissions (`plco2an`) for `analysis_year`, aggregate to county. Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
 ```{r}
 load_egrid_year <- function(year) {
   file_name <- file.path("egrid files", paste0("eGRID", year, "_data.xlsx"))
@@ -118,24 +118,21 @@ load_egrid_year <- function(year) {
 
   plants <- read_excel(file_name, sheet = sheet_name, skip = 1) |>
     clean_names() |>
-    filter(!is.na(fipsst), !is.na(fipscnty), plngenan > 0) |>
+    filter(!is.na(fipsst), !is.na(fipscnty), !is.na(plco2an), plco2an > 0) |>
     mutate(
       fips = str_c(str_pad(fipsst, 2, pad = "0"), str_pad(fipscnty, 3, pad = "0")),
-      total_gen = plngenan,
-      non_fossil_gen = plgenacn + plgenabm,
+      co2_emissions = plco2an,
       year = year
     )
 
-  county_energy_year <- plants |>
+  county_co2_year <- plants |>
     group_by(fips, year) |>
     summarise(
-      total_gen = sum(total_gen, na.rm = TRUE),
-      non_fossil_gen = sum(non_fossil_gen, na.rm = TRUE)
+      co2_emissions = sum(co2_emissions, na.rm = TRUE)
     ) |>
-    mutate(non_fossil_share = non_fossil_gen / total_gen) |>
-    filter(total_gen > 0)
+    filter(co2_emissions > 0)
 
-  county_energy_year
+  county_co2_year
 }
 
 county_energy <- load_egrid_year(analysis_year)
@@ -160,31 +157,31 @@ analysis_county_energy <- county_energy |>
 
 ```
 
-6. Change in non-fossil share vs median household income
-We take eGRID non-combustion share at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change, and join it directly onto `analysis_county_energy` (which is based on `county_energy` and already includes income columns).
+6. Change in plant annual CO2 emissions vs median household income
+We take eGRID plant annual CO2 emissions at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change, and join it directly onto `analysis_county_energy` (which is based on `county_energy` and already includes income columns).
 ```{r}
-county_energy_baseline <- load_egrid_year(egrid_change_baseline_year)
+county_co2_baseline <- load_egrid_year(egrid_change_baseline_year)
 
-energy_share_change <- county_energy_baseline |>
-  select(fips, non_fossil_share) |>
-  rename(share_baseline = non_fossil_share) |>
+co2_emissions_change <- county_co2_baseline |>
+  select(fips, co2_emissions) |>
+  rename(co2_baseline = co2_emissions) |>
   inner_join(
-    county_energy |> select(fips, non_fossil_share) |> rename(share_end = non_fossil_share),
+    county_energy |> select(fips, co2_emissions) |> rename(co2_end = co2_emissions),
     by = "fips"
   ) |>
-  mutate(non_fossil_share_change = share_end - share_baseline)
+  mutate(co2_emissions_change = co2_end - co2_baseline)
 
 analysis_county_energy <- analysis_county_energy |>
-  inner_join(energy_share_change, by = "fips")
+  inner_join(co2_emissions_change, by = "fips")
 
 analysis_energy_change <- analysis_county_energy |>
-  drop_na(median_income_aligned, non_fossil_share_change)
+  drop_na(median_income_aligned, co2_emissions_change)
 ```
 
 ```{r}
 cat("\n============================\n")
 cat(
-  "CHANGE ANALYSIS: non-fossil share (",
+  "CHANGE ANALYSIS: plant annual CO2 emissions (",
   egrid_change_baseline_year,
   " → ",
   analysis_year,
@@ -197,22 +194,22 @@ cat("============================\n")
 
 cor_change <- cor.test(
   analysis_energy_change$median_income_aligned,
-  analysis_energy_change$non_fossil_share_change,
+  analysis_energy_change$co2_emissions_change,
   method = "pearson"
 )
 print(cor_change)
 
-model_change <- lm(non_fossil_share_change ~ median_income_aligned, data = analysis_energy_change)
+model_change <- lm(co2_emissions_change ~ median_income_aligned, data = analysis_energy_change)
 print(summary(model_change))
 ```
 
 ```{r}
-ggplot(analysis_energy_change, aes(x = median_income_aligned, y = non_fossil_share_change)) +
+ggplot(analysis_energy_change, aes(x = median_income_aligned, y = co2_emissions_change)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = TRUE) +
   labs(
     title = paste0(
-      "Change in non-fossil share (",
+      "Change in plant annual CO2 emissions (",
       egrid_change_baseline_year,
       "–",
       analysis_year,
@@ -221,13 +218,13 @@ ggplot(analysis_energy_change, aes(x = median_income_aligned, y = non_fossil_sha
       " ACS)"
     ),
     x = "Median household income (B19013_001)",
-    y = "Change in non-fossil generation share"
+    y = "Change in annual CO2 emissions"
   ) +
   theme_minimal()
 ```
 
-7. Choropleth: change in non-fossil share
-Fill is `non_fossil_share_change` from `analysis_energy_change`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
+7. Choropleth: change in annual CO2 emissions
+Fill is `co2_emissions_change` from `analysis_energy_change`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
 
 ```{r map-nf-share-change-build}
 state_fips <- geography_df |>
@@ -241,7 +238,7 @@ counties_sf <- counties(state = state_fips, cb = TRUE, year = 2020) |>
 counties_map_change <- counties_sf |>
   inner_join(
     analysis_energy_change |>
-      select(fips, non_fossil_share_change),
+      select(fips, co2_emissions_change),
     by = c("GEOID" = "fips")
   )
 ```
@@ -249,31 +246,31 @@ counties_map_change <- counties_sf |>
 ```{r map-nf-share-change-plot}
 ggplot() +
   geom_sf(data = counties_sf, fill = "grey95", color = "grey80", linewidth = 0.05) +
-  geom_sf(data = counties_map_change, aes(fill = non_fossil_share_change), color = "grey35", linewidth = 0.08) +
+  geom_sf(data = counties_map_change, aes(fill = co2_emissions_change), color = "grey35", linewidth = 0.08) +
   scale_fill_gradient2(
-    low = "#7F2B0A",
+    low = "#3B8132",
     mid = "#f7f7f7",
-    high = "#3B8132",
+    high = "#7F2B0A",
     midpoint = 0,
-    name = "Change in\nnon-fossil share",
-    labels = scales::label_percent(accuracy = 0.1)
+    name = "Change in\nannual CO2 emissions",
+    labels = scales::label_comma()
   ) +
   theme_void() +
   theme(legend.position = "right") +
   labs(
     title = paste0(
-      "Change in non-fossil share, ",
+      "Change in annual CO2 emissions, ",
       egrid_change_baseline_year,
       "–",
       analysis_year
     ),
     subtitle = "Colored counties are analysis counties; grey counties provide surrounding-area context",
-    caption = "Fill uses analysis_energy_change$non_fossil_share_change."
+    caption = "Fill uses analysis_energy_change$co2_emissions_change."
   )
 ```
 
 
-8. Partisanship vs change in non-fossil share
+8. Partisanship vs change in annual CO2 emissions
 
 ```{r partisanship-join-and-plot}
 # Load .rda into an isolated environment so we can inspect objects safely
@@ -312,8 +309,8 @@ analysis_partisanship <- analysis_energy_change |>
   left_join(partisan_join, by = "fips")
 
 ggplot(
-  analysis_partisanship |> drop_na(PARTISAN_INDEX_DEM, non_fossil_share_change),
-  aes(x = PARTISAN_INDEX_DEM, y = non_fossil_share_change)
+  analysis_partisanship |> drop_na(PARTISAN_INDEX_DEM, co2_emissions_change),
+  aes(x = PARTISAN_INDEX_DEM, y = co2_emissions_change)
 ) +
   geom_point(alpha = 0.35) +
   geom_smooth(method = "lm", se = TRUE) +
@@ -324,14 +321,14 @@ ggplot(
   ) +
   labs(
     title = paste0(
-      "Partisan index vs change in non-fossil share (",
+      "Partisan index vs change in annual CO2 emissions (",
       egrid_change_baseline_year,
       "–",
       analysis_year,
       ")"
     ),
     x = "PARTISAN_INDEX_DEM (0 to 1)",
-    y = "Change in non-fossil generation share"
+    y = "Change in annual CO2 emissions"
   ) +
   theme_minimal()
 ```
@@ -378,8 +375,8 @@ cbsa_summary <- analysis_cbsa |>
   group_by(county_type) |>
   summarise(
     n = n(),
-    mean_change = mean(non_fossil_share_change, na.rm = TRUE),
-    sd_change = sd(non_fossil_share_change, na.rm = TRUE),
+    mean_change = mean(co2_emissions_change, na.rm = TRUE),
+    sd_change = sd(co2_emissions_change, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -390,18 +387,18 @@ ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) 
     width = 0.18,
     linewidth = 0.6
   ) +
-  scale_y_continuous(labels = scales::label_percent(accuracy = 0.1)) +
+  scale_y_continuous(labels = scales::label_comma()) +
   scale_fill_manual(values = c("Metropolitan" = "#E63400", "Micropolitan" = "#FF8B0F", "Rural" = "#6C3400")) +
   labs(
     title = paste0(
-      "Mean change in non-fossil share by county CBSA type, ",
+      "Mean change in annual CO2 emissions by county CBSA type, ",
       egrid_change_baseline_year,
       "–",
       analysis_year
     ),
     subtitle = "Error bars show +/- 1 standard deviation",
     x = NULL,
-    y = "Mean change in non-fossil generation share",
+    y = "Mean change in annual CO2 emissions",
     caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
   ) +
   theme_minimal()
