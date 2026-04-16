@@ -46,8 +46,20 @@ geography_file <- "geography.csv"  # File with county list for selected geograph
 # Change this to analyze different years (must be available in both ACS and eGRID)
 analysis_year <- 2021
 
-# Baseline year for "change in plant annual CO2 emissions" analysis (end year is analysis_year)
+# Baseline year for change analysis (end year is analysis_year)
 egrid_change_baseline_year <- 2016
+
+# CONFIGURE ENERGY VARIABLE HERE
+# Options:
+#  - "renewable_mwh": change in renewable generation (MWh) (plgenacn + plgenabm)
+#  - "co2_tons":      change in CO2 emissions (tons) (plco2an)
+energy_var <- "renewable_mwh"
+
+energy_label <- if (energy_var == "renewable_mwh") {
+  "Change in renewable generation (MWh)"
+} else {
+  "Change in annual CO2 emissions (tons)"
+}
 
 ```
 
@@ -96,50 +108,68 @@ income_lagged_app <- income_lagged |>
   inner_join(geography_df, by = c("GEOID" = "fips"))
 ```
 
-4. eGRID Data (Annual CO2 Emissions)
-We load plant-level annual CO2 emissions (`plco2an`) for `analysis_year`, aggregate to county. Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
+4. eGRID Data (Energy Change)
+We load plant-level eGRID data for the baseline and analysis years, aggregate to county, and compute change in the selected energy variable (`energy_var`). Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
 ```{r}
-load_egrid_year <- function(year) {
-  file_name <- file.path("egrid files", paste0("eGRID", year, "_data.xlsx"))
-  sheets <- excel_sheets(file_name)
-  yy <- sprintf("%02d", year %% 100)
-  sheet_plnt <- paste0("PLNT", yy)
-  sheet_egrd <- paste0("EGRDPLNT", yy)
-  sheet_name <- if (sheet_plnt %in% sheets) {
-    sheet_plnt
-  } else if (sheet_egrd %in% sheets) {
-    sheet_egrd
-  } else {
-    stop(
-      "No plant sheet ", sheet_plnt, " or ", sheet_egrd, " in ", file_name,
-      ". Available: ", paste(sheets, collapse = ", ")
-    )
+load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewable_mwh", "co2_tons")) {
+  energy_var <- match.arg(energy_var)
+
+  load_plants_for_year <- function(year, energy_var) {
+    file_name <- file.path("egrid files", paste0("eGRID", year, "_data.xlsx"))
+    sheets <- excel_sheets(file_name)
+    yy <- sprintf("%02d", year %% 100)
+    sheet_plnt <- paste0("PLNT", yy)
+    sheet_egrd <- paste0("EGRDPLNT", yy)
+    sheet_name <- if (sheet_plnt %in% sheets) {
+      sheet_plnt
+    } else if (sheet_egrd %in% sheets) {
+      sheet_egrd
+    } else {
+      stop(
+        "No plant sheet ", sheet_plnt, " or ", sheet_egrd, " in ", file_name,
+        ". Available: ", paste(sheets, collapse = ", ")
+      )
+    }
+
+    plants <- read_excel(file_name, sheet = sheet_name, skip = 1) |>
+      clean_names() |>
+      filter(!is.na(fipsst), !is.na(fipscnty)) |>
+      mutate(
+        fips = str_c(str_pad(fipsst, 2, pad = "0"), str_pad(fipscnty, 3, pad = "0"))
+      )
+
+    if (energy_var == "renewable_mwh") {
+      plants <- plants |>
+        mutate(energy_value = plgenacn + plgenabm)
+    } else if (energy_var == "co2_tons") {
+      plants <- plants |>
+        mutate(energy_value = plco2an)
+    }
+
+    plants |>
+      filter(!is.na(energy_value)) |>
+      group_by(fips) |>
+      summarise(energy = sum(energy_value, na.rm = TRUE), .groups = "drop")
   }
 
-  plants <- read_excel(file_name, sheet = sheet_name, skip = 1) |>
-    clean_names() |>
-    filter(!is.na(fipsst), !is.na(fipscnty), !is.na(plco2an), plco2an > 0) |>
-    mutate(
-      fips = str_c(str_pad(fipsst, 2, pad = "0"), str_pad(fipscnty, 3, pad = "0")),
-      co2_emissions = plco2an,
-      year = year
-    )
+  county_baseline <- load_plants_for_year(baseline_year, energy_var) |>
+    rename(energy_baseline = energy)
 
-  county_co2_year <- plants |>
-    group_by(fips, year) |>
-    summarise(
-      co2_emissions = sum(co2_emissions, na.rm = TRUE)
-    ) |>
-    filter(co2_emissions > 0)
+  county_analysis <- load_plants_for_year(analysis_year, energy_var) |>
+    rename(energy_end = energy)
 
-  county_co2_year
+  county_change <- county_baseline |>
+    inner_join(county_analysis, by = "fips") |>
+    mutate(energy_change = energy_end - energy_baseline)
+
+  county_change
 }
 
-county_energy <- load_egrid_year(analysis_year)
+county_energy <- load_egrid_year(analysis_year, egrid_change_baseline_year, energy_var)
 ```
 
 5. Build Analysis Datasets
-We use `county_energy` as the base dataset, then join income data.
+We use `county_energy` (which already contains `energy_change`) as the base dataset, then join income data.
 ```{r}
 analysis_county_energy <- county_energy |>
   inner_join(
@@ -157,31 +187,17 @@ analysis_county_energy <- county_energy |>
 
 ```
 
-6. Change in plant annual CO2 emissions vs median household income
-We take eGRID plant annual CO2 emissions at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change, and join it directly onto `analysis_county_energy` (which is based on `county_energy` and already includes income columns).
+6. Change in energy variable vs median household income
+We take the selected eGRID energy variable at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change inside `load_egrid_year()`, and work with the resulting `energy_change` column.
 ```{r}
-county_co2_baseline <- load_egrid_year(egrid_change_baseline_year)
-
-co2_emissions_change <- county_co2_baseline |>
-  select(fips, co2_emissions) |>
-  rename(co2_baseline = co2_emissions) |>
-  inner_join(
-    county_energy |> select(fips, co2_emissions) |> rename(co2_end = co2_emissions),
-    by = "fips"
-  ) |>
-  mutate(co2_emissions_change = co2_end - co2_baseline)
-
-analysis_county_energy <- analysis_county_energy |>
-  inner_join(co2_emissions_change, by = "fips")
-
 analysis_energy_change <- analysis_county_energy |>
-  drop_na(median_income_aligned, co2_emissions_change)
+  drop_na(median_income_aligned, energy_change)
 ```
 
 ```{r}
 cat("\n============================\n")
 cat(
-  "CHANGE ANALYSIS: plant annual CO2 emissions (",
+  "CHANGE ANALYSIS: selected energy variable (",
   egrid_change_baseline_year,
   " → ",
   analysis_year,
@@ -194,22 +210,22 @@ cat("============================\n")
 
 cor_change <- cor.test(
   analysis_energy_change$median_income_aligned,
-  analysis_energy_change$co2_emissions_change,
+  analysis_energy_change$energy_change,
   method = "pearson"
 )
 print(cor_change)
 
-model_change <- lm(co2_emissions_change ~ median_income_aligned, data = analysis_energy_change)
+model_change <- lm(energy_change ~ median_income_aligned, data = analysis_energy_change)
 print(summary(model_change))
 ```
 
 ```{r}
-ggplot(analysis_energy_change, aes(x = median_income_aligned, y = co2_emissions_change)) +
+ggplot(analysis_energy_change, aes(x = median_income_aligned, y = energy_change)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = TRUE) +
   labs(
     title = paste0(
-      "Change in plant annual CO2 emissions (",
+      "Change in selected energy variable (",
       egrid_change_baseline_year,
       "–",
       analysis_year,
@@ -218,13 +234,13 @@ ggplot(analysis_energy_change, aes(x = median_income_aligned, y = co2_emissions_
       " ACS)"
     ),
     x = "Median household income (B19013_001)",
-    y = "Change in annual CO2 emissions"
+    y = energy_label
   ) +
   theme_minimal()
 ```
 
-7. Choropleth: change in annual CO2 emissions
-Fill is `co2_emissions_change` from `analysis_energy_change`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
+7. Choropleth: change in selected energy variable
+Fill is `energy_change` from `analysis_energy_change`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
 
 ```{r map-nf-share-change-build}
 state_fips <- geography_df |>
@@ -238,7 +254,7 @@ counties_sf <- counties(state = state_fips, cb = TRUE, year = 2020) |>
 counties_map_change <- counties_sf |>
   inner_join(
     analysis_energy_change |>
-      select(fips, co2_emissions_change),
+      select(fips, energy_change),
     by = c("GEOID" = "fips")
   )
 ```
@@ -246,31 +262,31 @@ counties_map_change <- counties_sf |>
 ```{r map-nf-share-change-plot}
 ggplot() +
   geom_sf(data = counties_sf, fill = "grey95", color = "grey80", linewidth = 0.05) +
-  geom_sf(data = counties_map_change, aes(fill = co2_emissions_change), color = "grey35", linewidth = 0.08) +
+  geom_sf(data = counties_map_change, aes(fill = energy_change), color = "grey35", linewidth = 0.08) +
   scale_fill_gradient2(
     low = "#3B8132",
     mid = "#f7f7f7",
     high = "#7F2B0A",
     midpoint = 0,
-    name = "Change in\nannual CO2 emissions",
+    name = "Change in\nselected energy variable",
     labels = scales::label_comma()
   ) +
   theme_void() +
   theme(legend.position = "right") +
   labs(
     title = paste0(
-      "Change in annual CO2 emissions, ",
+      "Change in selected energy variable, ",
       egrid_change_baseline_year,
       "–",
       analysis_year
     ),
     subtitle = "Colored counties are analysis counties; grey counties provide surrounding-area context",
-    caption = "Fill uses analysis_energy_change$co2_emissions_change."
+    caption = "Fill uses analysis_energy_change$energy_change."
   )
 ```
 
 
-8. Partisanship vs change in annual CO2 emissions
+8. Partisanship vs change in selected energy variable
 
 ```{r partisanship-join-and-plot}
 # Load .rda into an isolated environment so we can inspect objects safely
@@ -309,8 +325,8 @@ analysis_partisanship <- analysis_energy_change |>
   left_join(partisan_join, by = "fips")
 
 ggplot(
-  analysis_partisanship |> drop_na(PARTISAN_INDEX_DEM, co2_emissions_change),
-  aes(x = PARTISAN_INDEX_DEM, y = co2_emissions_change)
+  analysis_partisanship |> drop_na(PARTISAN_INDEX_DEM, energy_change),
+  aes(x = PARTISAN_INDEX_DEM, y = energy_change)
 ) +
   geom_point(alpha = 0.35) +
   geom_smooth(method = "lm", se = TRUE) +
@@ -321,14 +337,14 @@ ggplot(
   ) +
   labs(
     title = paste0(
-      "Partisan index vs change in annual CO2 emissions (",
+      "Partisan index vs change in selected energy variable (",
       egrid_change_baseline_year,
       "–",
       analysis_year,
       ")"
     ),
     x = "PARTISAN_INDEX_DEM (0 to 1)",
-    y = "Change in annual CO2 emissions"
+    y = energy_label
   ) +
   theme_minimal()
 ```
@@ -375,8 +391,8 @@ cbsa_summary <- analysis_cbsa |>
   group_by(county_type) |>
   summarise(
     n = n(),
-    mean_change = mean(co2_emissions_change, na.rm = TRUE),
-    sd_change = sd(co2_emissions_change, na.rm = TRUE),
+    mean_change = mean(energy_change, na.rm = TRUE),
+    sd_change = sd(energy_change, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -391,14 +407,14 @@ ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) 
   scale_fill_manual(values = c("Metropolitan" = "#E63400", "Micropolitan" = "#FF8B0F", "Rural" = "#6C3400")) +
   labs(
     title = paste0(
-      "Mean change in annual CO2 emissions by county CBSA type, ",
+      "Mean change in selected energy variable by county CBSA type, ",
       egrid_change_baseline_year,
       "–",
       analysis_year
     ),
     subtitle = "Error bars show +/- 1 standard deviation",
     x = NULL,
-    y = "Mean change in annual CO2 emissions",
+    y = energy_label,
     caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
   ) +
   theme_minimal()
