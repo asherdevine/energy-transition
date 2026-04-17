@@ -510,6 +510,27 @@ cat("TUKEY POST HOC: state\n")
 cat("============================\n")
 print(tukey_state)
 
+tukey_state_tbl <- as.data.frame(tukey_state$state) |>
+  rownames_to_column("comparison") |>
+  as_tibble() |>
+  rename(
+    diff = diff,
+    conf_low = lwr,
+    conf_high = upr,
+    p_adj = `p adj`
+  ) |>
+  arrange(p_adj)
+
+sig_tukey_state <- tukey_state_tbl |>
+  filter(p_adj < 0.05)
+
+cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
+if (nrow(sig_tukey_state) == 0) {
+  cat("None at p < 0.05.\n")
+} else {
+  print(sig_tukey_state)
+}
+
 plot(tukey_state, las = 1)
 ```
 
