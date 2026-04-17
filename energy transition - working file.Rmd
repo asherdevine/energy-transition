@@ -117,6 +117,7 @@ We load plant-level eGRID data for the baseline and analysis years, aggregate to
 load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewable_mwh", "co2_tons", "COAL")) {
   energy_var <- match.arg(energy_var)
 
+  # Read one year, normalize county FIPS, and aggregate selected energy metric.
   load_plants_for_year <- function(year, energy_var) {
     file_name <- file.path("egrid files", paste0("eGRID", year, "_data.xlsx"))
     sheets <- excel_sheets(file_name)
@@ -172,6 +173,36 @@ load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewa
 }
 
 county_energy <- load_egrid_year(analysis_year, egrid_change_baseline_year, energy_var)
+
+# County-year panel across all available eGRID years in analysis period.
+load_egrid_panel <- function(baseline_year, analysis_year, energy_var = c("renewable_mwh", "co2_tons", "COAL")) {
+  energy_var <- match.arg(energy_var)
+
+  egrid_files <- list.files(
+    path = "egrid files",
+    pattern = "^eGRID[0-9]{4}_data\\.xlsx$",
+    full.names = FALSE
+  )
+
+  available_years <- egrid_files |>
+    str_extract("[0-9]{4}") |>
+    as.integer() |>
+    discard(is.na) |>
+    sort()
+
+  years_in_period <- available_years[available_years >= baseline_year & available_years <= analysis_year]
+
+  if (length(years_in_period) == 0) {
+    stop(
+      "No eGRID files found for years between ", baseline_year, " and ", analysis_year, "."
+    )
+  }
+
+  map_dfr(years_in_period, function(y) {
+    load_egrid_year(y, y, energy_var) |>
+      transmute(fips, year = y, e_var = energy_end)
+  })
+}
 ```
 
 5. Build Analysis Datasets
@@ -424,4 +455,90 @@ ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) 
     caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
   ) +
   theme_minimal()
+```
+
+10. ANOVA: annual energy variable by year/state/subregion/CBSA
+
+```{r anova-energy-panel}
+egrid_panel <- load_egrid_panel(
+  baseline_year = egrid_change_baseline_year,
+  analysis_year = analysis_year,
+  energy_var = energy_var
+)
+
+anova_df <- egrid_panel |>
+  inner_join(
+    geography_df |> select(fips, state, subregion),
+    by = "fips"
+  ) |>
+  left_join(
+    county_cbsa |>
+      transmute(
+        fips,
+        cbsa_factor = case_when(
+          cbsa_type == "Metropolitan" ~ "Metropolitan",
+          cbsa_type == "Micropolitan" ~ "Micropolitan",
+          TRUE ~ "Rural/Neither"
+        )
+      ),
+    by = "fips"
+  ) |>
+  mutate(
+    year = factor(year),
+    state = factor(state),
+    subregion = factor(subregion),
+    cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural/Neither"))
+  ) |>
+  drop_na(e_var, year, state, subregion, cbsa_factor)
+
+anova_model <- lm(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+anova_results <- anova(anova_model)
+
+cat("\n============================\n")
+cat("ANOVA: e_var ~ year + state + subregion + cbsa_factor\n")
+cat("============================\n")
+print(anova_results)
+```
+
+```{r tukey-posthoc-state}
+# Tukey post hoc for state main effect from ANOVA model
+anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+tukey_state <- TukeyHSD(anova_model_aov, which = "state")
+
+cat("\n============================\n")
+cat("TUKEY POST HOC: state\n")
+cat("============================\n")
+print(tukey_state)
+
+plot(tukey_state, las = 1)
+```
+
+11. Panel model: county and year fixed effects (clustered SE)
+
+```{r panel-fe-model}
+# panel_df <- anova_df |>
+#   mutate(
+#     county_id = factor(fips),
+#     year = factor(year)
+#   )
+# 
+# fe_model <- lm(e_var ~ year + county_id, data = panel_df)
+# 
+# if (requireNamespace("sandwich", quietly = TRUE) && requireNamespace("lmtest", quietly = TRUE)) {
+#   vcov_cluster_county <- sandwich::vcovCL(fe_model, cluster = ~ fips)
+#   fe_results_clustered <- lmtest::coeftest(fe_model, vcov. = vcov_cluster_county)
+# 
+#   cat("\n============================\n")
+#   cat("PANEL FE MODEL: e_var ~ year + county fixed effects (SE clustered by county)\n")
+#   cat("============================\n")
+#   print(fe_results_clustered)
+# } else {
+#   cat("\n============================\n")
+#   cat("PANEL FE MODEL: e_var ~ year + county fixed effects\n")
+#   cat("============================\n")
+#   cat("Packages 'sandwich' and/or 'lmtest' are not installed; showing default lm() summary.\n")
+#   print(summary(fe_model))
+# }
+# 
+# cat("\nNote: With county fixed effects, time-invariant county attributes (state/subregion/CBSA) are absorbed and not separately identified.\n")
 ```
