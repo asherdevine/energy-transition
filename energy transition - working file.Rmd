@@ -49,19 +49,20 @@ analysis_year <- 2022
 # Baseline year for change analysis (end year is analysis_year)
 egrid_change_baseline_year <- 2012
 
-# CONFIGURE ENERGY VARIABLE HERE
-# Options:
+# ENERGY VARIABLES (all three run in one knit)
 #  - "renewable_mwh": change in renewable generation (MWh) (plgenacn + plgenabm)
 #  - "co2_tons":      change in CO2 emissions (tons) (plco2an)
 #  - "COAL":          change in generation from coal (MWh) (plgenacl)
-energy_var <- "COAL"
+energy_vars <- c("renewable_mwh", "co2_tons", "COAL")
 
-energy_label <- if (energy_var == "renewable_mwh") {
-  "Change in generation from renewables (MWh)"
-} else if (energy_var == "co2_tons") {
-  "Change in annual CO2 emissions (tons)"
-} else { 
-  "Change in generation from coal (MWh)"
+energy_label_for <- function(energy_var) {
+  if (energy_var == "renewable_mwh") {
+    "Change in generation from renewables (MWh)"
+  } else if (energy_var == "co2_tons") {
+    "Change in annual CO2 emissions (tons)"
+  } else {
+    "Change in generation from coal (MWh)"
+  }
 }
 
 ```
@@ -170,7 +171,7 @@ income_lagged_app <- income_lagged |>
 ```
 
 4. eGRID Data (Energy Change)
-We load plant-level eGRID data for the baseline and analysis years, aggregate to county, and compute change in the selected energy variable (`energy_var`). Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
+We load plant-level eGRID data for the baseline and analysis years, aggregate to county, and compute change for each entry in `energy_vars`. Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
 ```{r}
 load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewable_mwh", "co2_tons", "COAL")) {
   energy_var <- match.arg(energy_var)
@@ -230,7 +231,9 @@ load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewa
   county_change
 }
 
-county_energy <- load_egrid_year(analysis_year, egrid_change_baseline_year, energy_var)
+county_energy_by_var <- energy_vars |>
+  set_names() |>
+  map(function(ev) load_egrid_year(analysis_year, egrid_change_baseline_year, ev))
 
 # County-year panel across all available eGRID years in analysis period.
 load_egrid_panel <- function(baseline_year, analysis_year, energy_var = c("renewable_mwh", "co2_tons", "COAL")) {
@@ -264,78 +267,89 @@ load_egrid_panel <- function(baseline_year, analysis_year, energy_var = c("renew
 ```
 
 5. Build Analysis Datasets
-We use `county_energy` (which already contains `energy_change`) as the base dataset, then join income data.
+For each energy variable, we use the corresponding `county_energy` (with `energy_change`) as the base dataset, then join income data.
 ```{r}
-analysis_county_energy <- county_energy |>
-  inner_join(
-    income_aligned_app |>
-      select(GEOID, median_income) |>
-      rename(median_income_aligned = median_income),
-    by = c("fips" = "GEOID")
-  ) |>
-  left_join(
-    income_lagged_app |>
-      select(GEOID, median_income) |>
-      rename(median_income_lagged = median_income),
-    by = c("fips" = "GEOID")
-  )
+analysis_county_energy_by_var <- county_energy_by_var |>
+  map(function(county_energy) {
+    county_energy |>
+      inner_join(
+        income_aligned_app |>
+          select(GEOID, median_income) |>
+          rename(median_income_aligned = median_income),
+        by = c("fips" = "GEOID")
+      ) |>
+      left_join(
+        income_lagged_app |>
+          select(GEOID, median_income) |>
+          rename(median_income_lagged = median_income),
+        by = c("fips" = "GEOID")
+      )
+  })
+
+analysis_energy_change_by_var <- analysis_county_energy_by_var |>
+  map(~ drop_na(.x, median_income_aligned, energy_change))
 
 ```
 
 6. Change in energy variable vs median household income
-We take the selected eGRID energy variable at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change inside `load_egrid_year()`, and work with the resulting `energy_change` column.
+For each entry in `energy_vars`, we take that eGRID metric at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change inside `load_egrid_year()`, and work with the resulting `energy_change` column.
 ```{r}
-analysis_energy_change <- analysis_county_energy |>
-  drop_na(median_income_aligned, energy_change)
+walk(energy_vars, function(ev) {
+  analysis_energy_change <- analysis_energy_change_by_var[[ev]]
+  cat("\n============================\n")
+  cat("CHANGE ANALYSIS [", ev, "]: (", sep = "")
+  cat(
+    egrid_change_baseline_year,
+    " → ",
+    analysis_year,
+    ") vs median household income (ACS ",
+    analysis_year,
+    ", B19013_001)\n",
+    sep = ""
+  )
+  cat("============================\n")
+
+  cor_change <- cor.test(
+    analysis_energy_change$median_income_aligned,
+    analysis_energy_change$energy_change,
+    method = "pearson"
+  )
+  print(cor_change)
+
+  model_change <- lm(energy_change ~ median_income_aligned, data = analysis_energy_change)
+  print(summary(model_change))
+})
 ```
 
 ```{r}
-cat("\n============================\n")
-cat(
-  "CHANGE ANALYSIS: selected energy variable (",
-  egrid_change_baseline_year,
-  " → ",
-  analysis_year,
-  ") vs median household income (ACS ",
-  analysis_year,
-  ", B19013_001)\n",
-  sep = ""
-)
-cat("============================\n")
-
-cor_change <- cor.test(
-  analysis_energy_change$median_income_aligned,
-  analysis_energy_change$energy_change,
-  method = "pearson"
-)
-print(cor_change)
-
-model_change <- lm(energy_change ~ median_income_aligned, data = analysis_energy_change)
-print(summary(model_change))
-```
-
-```{r}
-ggplot(analysis_energy_change, aes(x = median_income_aligned, y = energy_change)) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "lm", se = TRUE) +
-  labs(
-    title = paste0(
-      "Change in selected energy variable (",
-      egrid_change_baseline_year,
-      "–",
-      analysis_year,
-      ") vs median household income (",
-      analysis_year,
-      " ACS)"
-    ),
-    x = "Median household income (B19013_001)",
-    y = energy_label
-  ) +
-  theme_minimal()
+walk(energy_vars, function(ev) {
+  analysis_energy_change <- analysis_energy_change_by_var[[ev]]
+  print(
+    ggplot(analysis_energy_change, aes(x = median_income_aligned, y = energy_change)) +
+      geom_point(alpha = 0.3) +
+      geom_smooth(method = "lm", se = TRUE) +
+      labs(
+        title = paste0(
+          "[",
+          ev,
+          "] Change in energy variable (",
+          egrid_change_baseline_year,
+          "–",
+          analysis_year,
+          ") vs median household income (",
+          analysis_year,
+          " ACS)"
+        ),
+        x = "Median household income (B19013_001)",
+        y = energy_label_for(ev)
+      ) +
+      theme_minimal()
+  )
+})
 ```
 
 7. Choropleth: change in selected energy variable
-Fill is `energy_change` from `analysis_energy_change`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
+Fill is `energy_change` from `analysis_energy_change_by_var[[ev]]` for each `ev` in `energy_vars`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
 
 ```{r map-nf-share-change-build}
 state_fips <- geography_df |>
@@ -346,38 +360,46 @@ state_fips <- geography_df |>
 counties_sf <- counties(state = state_fips, cb = TRUE, year = 2020) |>
   st_transform(crs = 5070)
 
-counties_map_change <- counties_sf |>
-  inner_join(
-    analysis_energy_change |>
-      select(fips, energy_change),
-    by = c("GEOID" = "fips")
-  )
+counties_map_change_by_var <- analysis_energy_change_by_var |>
+  map(~ counties_sf |>
+    inner_join(
+      .x |>
+        select(fips, energy_change),
+      by = c("GEOID" = "fips")
+    ))
 ```
 
 ```{r map-nf-share-change-plot}
-ggplot() +
-  geom_sf(data = counties_sf, fill = "grey95", color = "grey80", linewidth = 0.05) +
-  geom_sf(data = counties_map_change, aes(fill = energy_change), color = "grey35", linewidth = 0.08) +
-  scale_fill_gradient2(
-    low = "#3B8132",
-    mid = "#f7f7f7",
-    high = "#7F2B0A",
-    midpoint = 0,
-    name = "Change in\nselected energy variable",
-    labels = scales::label_comma()
-  ) +
-  theme_void() +
-  theme(legend.position = "right") +
-  labs(
-    title = paste0(
-      "Change in selected energy variable, ",
-      egrid_change_baseline_year,
-      "–",
-      analysis_year
-    ),
-    subtitle = "Colored counties are analysis counties; grey counties provide surrounding-area context",
-    caption = "Fill uses analysis_energy_change$energy_change."
+walk(energy_vars, function(ev) {
+  counties_map_change <- counties_map_change_by_var[[ev]]
+  print(
+    ggplot() +
+      geom_sf(data = counties_sf, fill = "grey95", color = "grey80", linewidth = 0.05) +
+      geom_sf(data = counties_map_change, aes(fill = energy_change), color = "grey35", linewidth = 0.08) +
+      scale_fill_gradient2(
+        low = "#3B8132",
+        mid = "#f7f7f7",
+        high = "#7F2B0A",
+        midpoint = 0,
+        name = "Change in\nenergy variable",
+        labels = scales::label_comma()
+      ) +
+      theme_void() +
+      theme(legend.position = "right") +
+      labs(
+        title = paste0(
+          "[",
+          ev,
+          "] Change in energy variable, ",
+          egrid_change_baseline_year,
+          "–",
+          analysis_year
+        ),
+        subtitle = "Colored counties are analysis counties; grey counties provide surrounding-area context",
+        caption = paste0("Variable: ", ev, "; fill uses energy_change.")
+      )
   )
+})
 ```
 
 
@@ -416,32 +438,39 @@ partisan_join <- partisan_tbl |>
     PARTISAN_INDEX_DEM = as.numeric(PARTISAN_INDEX_DEM)
   )
 
-analysis_partisanship <- analysis_energy_change |>
-  left_join(partisan_join, by = "fips")
+walk(energy_vars, function(ev) {
+  analysis_energy_change <- analysis_energy_change_by_var[[ev]]
+  analysis_partisanship <- analysis_energy_change |>
+    left_join(partisan_join, by = "fips")
 
-ggplot(
-  analysis_partisanship |> drop_na(PARTISAN_INDEX_DEM, energy_change),
-  aes(x = PARTISAN_INDEX_DEM, y = energy_change)
-) +
-  geom_point(alpha = 0.35) +
-  geom_smooth(method = "lm", se = TRUE) +
-  scale_x_continuous(
-    limits = c(0, 1),
-    breaks = seq(0, 1, by = 0.2),
-    labels = scales::label_number(accuracy = 0.1)
-  ) +
-  labs(
-    title = paste0(
-      "Partisan index vs change in selected energy variable (",
-      egrid_change_baseline_year,
-      "–",
-      analysis_year,
-      ")"
-    ),
-    x = "PARTISAN_INDEX_DEM (0 to 1)",
-    y = energy_label
-  ) +
-  theme_minimal()
+  print(
+    ggplot(
+      analysis_partisanship |> drop_na(PARTISAN_INDEX_DEM, energy_change),
+      aes(x = PARTISAN_INDEX_DEM, y = energy_change)
+    ) +
+      geom_point(alpha = 0.35) +
+      geom_smooth(method = "lm", se = TRUE) +
+      scale_x_continuous(
+        limits = c(0, 1),
+        breaks = seq(0, 1, by = 0.2),
+        labels = scales::label_number(accuracy = 0.1)
+      ) +
+      labs(
+        title = paste0(
+          "[",
+          ev,
+          "] Partisan index vs change in energy variable (",
+          egrid_change_baseline_year,
+          "–",
+          analysis_year,
+          ")"
+        ),
+        x = "PARTISAN_INDEX_DEM (0 to 1)",
+        y = energy_label_for(ev)
+      ) +
+      theme_minimal()
+  )
+})
 ```
 
 9. Metro vs micro vs rural (Census CBSA delineations)
@@ -459,127 +488,144 @@ county_cbsa <- counties_sf |>
     cbsa_type = replace_na(cbsa_type, "Rural")
   )
 
-analysis_cbsa <- analysis_energy_change |>
-  left_join(county_cbsa, by = "fips") |>
-  mutate(
-    county_type = cbsa_type,
-    county_type = factor(county_type, levels = c("Metropolitan", "Micropolitan", "Rural"))
-  )
+walk(energy_vars, function(ev) {
+  analysis_energy_change <- analysis_energy_change_by_var[[ev]]
+  analysis_cbsa <- analysis_energy_change |>
+    left_join(county_cbsa, by = "fips") |>
+    mutate(
+      county_type = cbsa_type,
+      county_type = factor(county_type, levels = c("Metropolitan", "Micropolitan", "Rural"))
+    )
 
-cbsa_summary <- analysis_cbsa |>
-  group_by(county_type) |>
-  summarise(
-    n = n(),
-    mean_change = mean(energy_change, na.rm = TRUE),
-    sd_change = sd(energy_change, na.rm = TRUE),
-    .groups = "drop"
-  )
+  cbsa_summary <- analysis_cbsa |>
+    group_by(county_type) |>
+    summarise(
+      n = n(),
+      mean_change = mean(energy_change, na.rm = TRUE),
+      sd_change = sd(energy_change, na.rm = TRUE),
+      .groups = "drop"
+    )
 
-ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) +
-  geom_col(width = 0.7, show.legend = FALSE) +
-  geom_errorbar(
-    aes(ymin = mean_change - sd_change, ymax = mean_change + sd_change),
-    width = 0.18,
-    linewidth = 0.6
-  ) +
-  scale_y_continuous(labels = scales::label_comma()) +
-  scale_fill_manual(values = c("Metropolitan" = "#E63400", "Micropolitan" = "#FF8B0F", "Rural" = "#6C3400")) +
-  labs(
-    title = paste0(
-      "Mean change in selected energy variable by county CBSA type, ",
-      egrid_change_baseline_year,
-      "–",
-      analysis_year
-    ),
-    subtitle = "Error bars show +/- 1 standard deviation",
-    x = NULL,
-    y = energy_label,
-    caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
-  ) +
-  theme_minimal()
+  print(
+    ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) +
+      geom_col(width = 0.7, show.legend = FALSE) +
+      geom_errorbar(
+        aes(ymin = mean_change - sd_change, ymax = mean_change + sd_change),
+        width = 0.18,
+        linewidth = 0.6
+      ) +
+      scale_y_continuous(labels = scales::label_comma()) +
+      scale_fill_manual(values = c("Metropolitan" = "#E63400", "Micropolitan" = "#FF8B0F", "Rural" = "#6C3400")) +
+      labs(
+        title = paste0(
+          "[",
+          ev,
+          "] Mean change in energy variable by county CBSA type, ",
+          egrid_change_baseline_year,
+          "–",
+          analysis_year
+        ),
+        subtitle = "Error bars show +/- 1 standard deviation",
+        x = NULL,
+        y = energy_label_for(ev),
+        caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
+      ) +
+      theme_minimal()
+  )
+})
 ```
 
 10. ANOVA: annual energy variable by year/state/subregion/CBSA
 
 ```{r anova-energy-panel}
-egrid_panel <- load_egrid_panel(
-  baseline_year = egrid_change_baseline_year,
-  analysis_year = analysis_year,
-  energy_var = energy_var
-)
+anova_df_by_var <- energy_vars |>
+  set_names() |>
+  map(function(ev) {
+    egrid_panel <- load_egrid_panel(
+      baseline_year = egrid_change_baseline_year,
+      analysis_year = analysis_year,
+      energy_var = ev
+    )
 
-anova_df <- egrid_panel |>
-  inner_join(
-    geography_df |> select(fips, state, subregion),
-    by = "fips"
-  ) |>
-  left_join(
-    county_cbsa |>
-      transmute(
-        fips,
-        cbsa_factor = case_when(
-          cbsa_type == "Metropolitan" ~ "Metropolitan",
-          cbsa_type == "Micropolitan" ~ "Micropolitan",
-          TRUE ~ "Rural/Neither"
-        )
-      ),
-    by = "fips"
-  ) |>
-  mutate(
-    year = factor(year),
-    state = factor(state),
-    subregion = factor(subregion),
-    cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural/Neither"))
-  ) |>
-  drop_na(e_var, year, state, subregion, cbsa_factor)
+    egrid_panel |>
+      inner_join(
+        geography_df |> select(fips, state, subregion),
+        by = "fips"
+      ) |>
+      left_join(
+        county_cbsa |>
+          transmute(
+            fips,
+            cbsa_factor = case_when(
+              cbsa_type == "Metropolitan" ~ "Metropolitan",
+              cbsa_type == "Micropolitan" ~ "Micropolitan",
+              TRUE ~ "Rural/Neither"
+            )
+          ),
+        by = "fips"
+      ) |>
+      mutate(
+        year = factor(year),
+        state = factor(state),
+        subregion = factor(subregion),
+        cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural/Neither"))
+      ) |>
+      drop_na(e_var, year, state, subregion, cbsa_factor)
+  })
 
-anova_model <- lm(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-anova_results <- anova(anova_model)
+walk(energy_vars, function(ev) {
+  anova_df <- anova_df_by_var[[ev]]
+  anova_model <- lm(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+  anova_results <- anova(anova_model)
 
-cat("\n============================\n")
-cat("ANOVA: e_var ~ year + state + subregion + cbsa_factor\n")
-cat("============================\n")
-print(anova_results)
+  cat("\n============================\n")
+  cat("ANOVA [", ev, "]: e_var ~ year + state + subregion + cbsa_factor\n", sep = "")
+  cat("============================\n")
+  print(anova_results)
+})
 ```
 
 ```{r tukey-posthoc-state}
-# Tukey post hoc for state main effect from ANOVA model
-anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-tukey_state <- TukeyHSD(anova_model_aov, which = "state")
+walk(energy_vars, function(ev) {
+  anova_df <- anova_df_by_var[[ev]]
 
-cat("\n============================\n")
-cat("TUKEY POST HOC: state\n")
-cat("============================\n")
-print(tukey_state)
+  anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+  tukey_state <- TukeyHSD(anova_model_aov, which = "state")
 
-tukey_state_tbl <- as.data.frame(tukey_state$state) |>
-  rownames_to_column("comparison") |>
-  as_tibble() |>
-  rename(
-    diff = diff,
-    conf_low = lwr,
-    conf_high = upr,
-    p_adj = `p adj`
-  ) |>
-  arrange(p_adj)
+  cat("\n============================\n")
+  cat("TUKEY POST HOC: state [", ev, "]\n", sep = "")
+  cat("============================\n")
+  print(tukey_state)
 
-sig_tukey_state <- tukey_state_tbl |>
-  filter(p_adj < 0.05)
+  tukey_state_tbl <- as.data.frame(tukey_state$state) |>
+    rownames_to_column("comparison") |>
+    as_tibble() |>
+    rename(
+      diff = diff,
+      conf_low = lwr,
+      conf_high = upr,
+      p_adj = `p adj`
+    ) |>
+    arrange(p_adj)
 
-cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
-if (nrow(sig_tukey_state) == 0) {
-  cat("None at p < 0.05.\n")
-} else {
-  print(sig_tukey_state)
-}
+  sig_tukey_state <- tukey_state_tbl |>
+    filter(p_adj < 0.05)
 
-plot(tukey_state, las = 1)
+  cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
+  if (nrow(sig_tukey_state) == 0) {
+    cat("None at p < 0.05.\n")
+  } else {
+    print(sig_tukey_state)
+  }
+
+  plot(tukey_state, las = 1, main = paste0("Tukey HSD (state): ", ev))
+})
 ```
 
 11. Panel model: county and year fixed effects (clustered SE)
 
 ```{r panel-fe-model}
-# panel_df <- anova_df |>
+# panel_df <- anova_df_by_var[[energy_vars[1]]] |>
 #   mutate(
 #     county_id = factor(fips),
 #     year = factor(year)
