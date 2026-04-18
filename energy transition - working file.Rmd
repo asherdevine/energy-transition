@@ -274,7 +274,7 @@ analysis_county_energy_by_var <- county_energy_by_var |>
     county_energy |>
       inner_join(
         income_aligned_app |>
-          select(GEOID, median_income) |>
+          select(GEOID, median_income, median_income_change) |>
           rename(median_income_aligned = median_income),
         by = c("fips" = "GEOID")
       ) |>
@@ -348,6 +348,59 @@ walk(energy_vars, function(ev) {
 })
 ```
 
+6b. Change in energy variable vs change in median household income
+For each energy variable, we correlate county-level `energy_change` with county-level `median_income_change` (analysis year minus baseline year income).
+```{r}
+walk(energy_vars, function(ev) {
+  analysis_income_change <- analysis_county_energy_by_var[[ev]] |>
+    drop_na(median_income_change, energy_change)
+
+  cat("\n============================\n")
+  cat("INCOME-CHANGE CORRELATION [", ev, "]\n", sep = "")
+  cat("============================\n")
+
+  cor_income_change <- cor.test(
+    analysis_income_change$median_income_change,
+    analysis_income_change$energy_change,
+    method = "pearson"
+  )
+  print(cor_income_change)
+})
+```
+
+```{r}
+walk(energy_vars, function(ev) {
+  analysis_income_change <- analysis_county_energy_by_var[[ev]] |>
+    drop_na(median_income_change, energy_change)
+
+  print(
+    ggplot(analysis_income_change, aes(x = median_income_change, y = energy_change)) +
+      geom_point(alpha = 0.3) +
+      geom_smooth(method = "lm", se = TRUE) +
+      labs(
+        title = paste0(
+          "[",
+          ev,
+          "] Change in energy variable (",
+          egrid_change_baseline_year,
+          "–",
+          analysis_year,
+          ") vs change in median household income"
+        ),
+        x = paste0(
+          "Change in median household income (ACS ",
+          egrid_change_baseline_year,
+          " to ",
+          analysis_year,
+          ")"
+        ),
+        y = energy_label_for(ev)
+      ) +
+      theme_minimal()
+  )
+})
+```
+
 7. Choropleth: change in selected energy variable
 Fill is `energy_change` from `analysis_energy_change_by_var[[ev]]` for each `ev` in `energy_vars`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
 
@@ -406,46 +459,38 @@ walk(energy_vars, function(ev) {
 8. Partisanship vs change in selected energy variable
 
 ```{r partisanship-join-and-plot}
-# Load .rda into an isolated environment so we can inspect objects safely
-partisan_env <- new.env(parent = emptyenv())
-load("NaNDA partisanship.rda", envir = partisan_env)
-
-partisan_candidates <- ls(partisan_env)
-partisan_tbl <- NULL
-
-for (nm in partisan_candidates) {
-  obj <- get(nm, envir = partisan_env)
-  if (is.data.frame(obj) && "PARTISAN_INDEX_DEM" %in% names(obj)) {
-    partisan_tbl <- obj
-    break
-  }
-}
-
-if (is.null(partisan_tbl)) {
-  stop("No data frame with PARTISAN_INDEX_DEM found in NaNDA partisanship.rda")
-}
-
-fips_col_candidates <- c("STCOFIPS10", "FIPS", "GEOID", "geoid", "county_fips", "COUNTY_FIPS")
-fips_col <- intersect(fips_col_candidates, names(partisan_tbl))
-
-if (length(fips_col) == 0) {
-  stop("Could not find a county ID column (e.g., fips/GEOID) in partisanship data")
-}
-
-partisan_join <- partisan_tbl |>
+# Read partisanship directly from CSV and keep 2022 county-level values.
+partisan_join <- read_csv("partisanship.csv", show_col_types = FALSE) |>
+  filter(YEAR == 2022) |>
   transmute(
-    fips = str_pad(as.character(.data[[fips_col[1]]]), 5, pad = "0"),
+    fips = str_pad(as.character(STCOFIPS10), 5, pad = "0"),
     PARTISAN_INDEX_DEM = as.numeric(PARTISAN_INDEX_DEM)
   )
+
+if (nrow(partisan_join) == 0) {
+  stop("No 2022 rows found in partisanship.csv.")
+}
 
 walk(energy_vars, function(ev) {
   analysis_energy_change <- analysis_energy_change_by_var[[ev]]
   analysis_partisanship <- analysis_energy_change |>
-    left_join(partisan_join, by = "fips")
+    left_join(partisan_join, by = "fips") |>
+    drop_na(PARTISAN_INDEX_DEM, energy_change)
+
+  cor_partisan <- cor.test(
+    analysis_partisanship$PARTISAN_INDEX_DEM,
+    analysis_partisanship$energy_change,
+    method = "pearson"
+  )
+
+  cat("\n============================\n")
+  cat("PARTISANSHIP CORRELATION [", ev, "]\n", sep = "")
+  cat("============================\n")
+  print(cor_partisan)
 
   print(
     ggplot(
-      analysis_partisanship |> drop_na(PARTISAN_INDEX_DEM, energy_change),
+      analysis_partisanship,
       aes(x = PARTISAN_INDEX_DEM, y = energy_change)
     ) +
       geom_point(alpha = 0.35) +
@@ -586,40 +631,40 @@ walk(energy_vars, function(ev) {
 ```
 
 ```{r tukey-posthoc-state}
-walk(energy_vars, function(ev) {
-  anova_df <- anova_df_by_var[[ev]]
-
-  anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-  tukey_state <- TukeyHSD(anova_model_aov, which = "state")
-
-  cat("\n============================\n")
-  cat("TUKEY POST HOC: state [", ev, "]\n", sep = "")
-  cat("============================\n")
-  print(tukey_state)
-
-  tukey_state_tbl <- as.data.frame(tukey_state$state) |>
-    rownames_to_column("comparison") |>
-    as_tibble() |>
-    rename(
-      diff = diff,
-      conf_low = lwr,
-      conf_high = upr,
-      p_adj = `p adj`
-    ) |>
-    arrange(p_adj)
-
-  sig_tukey_state <- tukey_state_tbl |>
-    filter(p_adj < 0.05)
-
-  cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
-  if (nrow(sig_tukey_state) == 0) {
-    cat("None at p < 0.05.\n")
-  } else {
-    print(sig_tukey_state)
-  }
-
-  plot(tukey_state, las = 1, main = paste0("Tukey HSD (state): ", ev))
-})
+# walk(energy_vars, function(ev) {
+#   anova_df <- anova_df_by_var[[ev]]
+# 
+#   anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+#   tukey_state <- TukeyHSD(anova_model_aov, which = "state")
+# 
+#   cat("\n============================\n")
+#   cat("TUKEY POST HOC: state [", ev, "]\n", sep = "")
+#   cat("============================\n")
+#   print(tukey_state)
+# 
+#   tukey_state_tbl <- as.data.frame(tukey_state$state) |>
+#     rownames_to_column("comparison") |>
+#     as_tibble() |>
+#     rename(
+#       diff = diff,
+#       conf_low = lwr,
+#       conf_high = upr,
+#       p_adj = `p adj`
+#     ) |>
+#     arrange(p_adj)
+# 
+#   sig_tukey_state <- tukey_state_tbl |>
+#     filter(p_adj < 0.05)
+# 
+#   cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
+#   if (nrow(sig_tukey_state) == 0) {
+#     cat("None at p < 0.05.\n")
+#   } else {
+#     print(sig_tukey_state)
+#   }
+# 
+#   plot(tukey_state, las = 1, main = paste0("Tukey HSD (state): ", ev))
+# })
 ```
 
 11. Panel model: county and year fixed effects (clustered SE)
