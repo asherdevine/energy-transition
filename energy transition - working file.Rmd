@@ -631,40 +631,79 @@ walk(energy_vars, function(ev) {
 ```
 
 ```{r tukey-posthoc-state}
-# walk(energy_vars, function(ev) {
-#   anova_df <- anova_df_by_var[[ev]]
-# 
-#   anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-#   tukey_state <- TukeyHSD(anova_model_aov, which = "state")
-# 
-#   cat("\n============================\n")
-#   cat("TUKEY POST HOC: state [", ev, "]\n", sep = "")
-#   cat("============================\n")
-#   print(tukey_state)
-# 
-#   tukey_state_tbl <- as.data.frame(tukey_state$state) |>
-#     rownames_to_column("comparison") |>
-#     as_tibble() |>
-#     rename(
-#       diff = diff,
-#       conf_low = lwr,
-#       conf_high = upr,
-#       p_adj = `p adj`
-#     ) |>
-#     arrange(p_adj)
-# 
-#   sig_tukey_state <- tukey_state_tbl |>
-#     filter(p_adj < 0.05)
-# 
-#   cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
-#   if (nrow(sig_tukey_state) == 0) {
-#     cat("None at p < 0.05.\n")
-#   } else {
-#     print(sig_tukey_state)
-#   }
-# 
-#   plot(tukey_state, las = 1, main = paste0("Tukey HSD (state): ", ev))
-# })
+walk(energy_vars, function(ev) {
+  anova_df <- anova_df_by_var[[ev]]
+
+  anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+  tukey_state <- TukeyHSD(anova_model_aov, which = "state")
+
+  cat("\n============================\n")
+  cat("TUKEY POST HOC: state [", ev, "]\n", sep = "")
+  cat("============================\n")
+  print(tukey_state)
+
+  tukey_state_tbl <- as.data.frame(tukey_state$state) |>
+    rownames_to_column("comparison") |>
+    as_tibble() |>
+    rename(
+      diff = diff,
+      conf_low = lwr,
+      conf_high = upr,
+      p_adj = `p adj`
+    ) |>
+    arrange(p_adj)
+
+  sig_tukey_state <- tukey_state_tbl |>
+    filter(p_adj < 0.05)
+
+  cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
+  if (nrow(sig_tukey_state) == 0) {
+    cat("None at p < 0.05.\n")
+  } else {
+    print(sig_tukey_state)
+  }
+
+  plot(tukey_state, las = 1)
+  title(main = paste0("Tukey HSD (state): ", ev))
+})
+```
+
+```{r tukey-posthoc-cbsa}
+walk(energy_vars, function(ev) {
+  anova_df <- anova_df_by_var[[ev]]
+
+  anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+  tukey_cbsa <- TukeyHSD(anova_model_aov, which = "cbsa_factor")
+
+  cat("\n============================\n")
+  cat("TUKEY POST HOC: cbsa_factor [", ev, "]\n", sep = "")
+  cat("============================\n")
+  print(tukey_cbsa)
+
+  tukey_cbsa_tbl <- as.data.frame(tukey_cbsa$cbsa_factor) |>
+    rownames_to_column("comparison") |>
+    as_tibble() |>
+    rename(
+      diff = diff,
+      conf_low = lwr,
+      conf_high = upr,
+      p_adj = `p adj`
+    ) |>
+    arrange(p_adj)
+
+  sig_tukey_cbsa <- tukey_cbsa_tbl |>
+    filter(p_adj < 0.05)
+
+  cat("\nSignificant cbsa_factor pair differences (Tukey-adjusted p < 0.05):\n")
+  if (nrow(sig_tukey_cbsa) == 0) {
+    cat("None at p < 0.05.\n")
+  } else {
+    print(sig_tukey_cbsa)
+  }
+
+  plot(tukey_cbsa, las = 1)
+  title(main = paste0("Tukey HSD (cbsa_factor): ", ev))
+})
 ```
 
 11. Panel model: county and year fixed effects (clustered SE)

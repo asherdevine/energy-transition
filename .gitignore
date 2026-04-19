@@ -2,6 +2,7 @@
 .Rhistory
 .Rapp.history
 .RData
+.RDataTmp
 .Ruserdata
 
 # RStudio files
