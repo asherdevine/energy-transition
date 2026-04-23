@@ -28,6 +28,7 @@ library(readxl)
 library(janitor)
 library(spdep)
 library(ggplot2)
+library(lme4)
 
 options(tigris_use_cache = TRUE)
 
@@ -580,7 +581,209 @@ walk(energy_vars, function(ev) {
 })
 ```
 
-10. ANOVA: annual energy variable by year/state/subregion/CBSA
+10. Mixed model on asinh-transformed `energy_change`
+
+```{r glmm-energy-change-asinh}
+# Ensure partisanship join exists even if section 8 has not run yet.
+if (!exists("partisan_join")) {
+  partisan_join <- read_csv("partisanship.csv", show_col_types = FALSE) |>
+    filter(YEAR == 2022) |>
+    transmute(
+      fips = str_pad(as.character(STCOFIPS10), 5, pad = "0"),
+      partisan_index_dem = as.numeric(PARTISAN_INDEX_DEM)
+    )
+}
+
+partisan_join_glmm <- partisan_join |>
+  transmute(
+    fips,
+    partisan_index_dem = if ("partisan_index_dem" %in% names(partisan_join)) {
+      as.numeric(partisan_index_dem)
+    } else {
+      as.numeric(PARTISAN_INDEX_DEM)
+    }
+  )
+
+walk(energy_vars, function(ev) {
+  model_df <- analysis_county_energy_by_var[[ev]] |>
+    left_join(
+      geography_df |>
+        select(fips, state),
+      by = "fips"
+    ) |>
+    left_join(
+      county_cbsa |>
+        transmute(
+          fips,
+          cbsa_factor = case_when(
+            cbsa_type == "Metropolitan" ~ "Metropolitan",
+            cbsa_type == "Micropolitan" ~ "Micropolitan",
+            TRUE ~ "Rural/Neither"
+          )
+        ),
+      by = "fips"
+    ) |>
+    left_join(partisan_join_glmm, by = "fips") |>
+    mutate(
+      asinh_energy_change = asinh(energy_change),
+      state = factor(state),
+      cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural/Neither"))
+    ) |>
+    drop_na(
+      asinh_energy_change,
+      median_income_aligned,
+      median_income_change,
+      partisan_index_dem,
+      state,
+      cbsa_factor
+    )
+
+  model_df <- model_df |>
+    mutate(
+      z_median_income_aligned = as.numeric(scale(median_income_aligned)),
+      z_median_income_change = as.numeric(scale(median_income_change)),
+      z_partisan_index_dem = as.numeric(scale(partisan_index_dem))
+    ) |>
+    drop_na(
+      z_median_income_aligned,
+      z_median_income_change,
+      z_partisan_index_dem
+    )
+
+  # Gaussian mixed model should use lmer() directly (not glmer(..., family = gaussian())).
+  lmm_formula <- asinh_energy_change ~
+    z_median_income_aligned +
+    z_median_income_change +
+    z_partisan_index_dem +
+    (1 | state) +
+    (1 | cbsa_factor)
+
+  lmm_fit <- lmer(
+    lmm_formula,
+    data = model_df,
+    REML = TRUE
+  )
+
+  cat("\n============================\n")
+  cat("MIXED MODEL [", ev, "]: asinh(energy_change)\n", sep = "")
+  cat("============================\n")
+  cat(
+    "Model: asinh(energy_change) ~ z_median_income_aligned + z_median_income_change + z_partisan_index_dem + (1|state) + (1|cbsa_factor)\n"
+  )
+  cat("Rows used:", nrow(model_df), "\n")
+  print(summary(lmm_fit))
+
+  if (requireNamespace("lmerTest", quietly = TRUE)) {
+    cat("\nFixed-effect p-values (Satterthwaite):\n")
+    lmm_fit_p <- lmerTest::lmer(
+      lmm_formula,
+      data = model_df,
+      REML = TRUE
+    )
+    print(summary(lmm_fit_p)$coefficients)
+  } else {
+    cat(
+      "\nInstall 'lmerTest' to report mixed-model p-values:\n",
+      "install.packages('lmerTest')\n",
+      sep = ""
+    )
+  }
+
+  if (isSingular(lmm_fit, tol = 1e-5)) {
+    cat(
+      "\nNote: singular fit (random-effect variance near zero). ",
+      "Refitting with state and cbsa_factor as fixed effects for inference.\n",
+      sep = ""
+    )
+    lm_fixed_fit <- lm(
+      asinh_energy_change ~
+        z_median_income_aligned +
+        z_median_income_change +
+        z_partisan_index_dem +
+        state +
+        cbsa_factor,
+      data = model_df
+    )
+    print(summary(lm_fixed_fit))
+  }
+})
+```
+
+11. Distribution check: `e_var` and fitted Gaussian model
+
+```{r evar-gaussian-check}
+walk(energy_vars, function(ev) {
+  egrid_panel <- load_egrid_panel(
+    baseline_year = egrid_change_baseline_year,
+    analysis_year = analysis_year,
+    energy_var = ev
+  )
+
+  dist_df <- egrid_panel |>
+    drop_na(e_var)
+
+  mu_hat <- mean(dist_df$e_var, na.rm = TRUE)
+  sigma_hat <- sd(dist_df$e_var, na.rm = TRUE)
+
+  cat("\n============================\n")
+  cat("GAUSSIAN CHECK [", ev, "]\n", sep = "")
+  cat("============================\n")
+  cat("n =", nrow(dist_df), "\n")
+  cat("mean (mu) =", round(mu_hat, 4), "\n")
+  cat("sd (sigma) =", round(sigma_hat, 4), "\n")
+
+  if (nrow(dist_df) >= 3 && nrow(dist_df) <= 5000) {
+    shapiro_out <- shapiro.test(dist_df$e_var)
+    cat("Shapiro-Wilk p-value =", signif(shapiro_out$p.value, 4), "\n")
+  } else {
+    cat("Shapiro-Wilk skipped (requires 3 <= n <= 5000).\n")
+  }
+
+  print(
+    ggplot(dist_df, aes(x = e_var)) +
+      geom_histogram(
+        aes(y = after_stat(count)),
+        bins = 35,
+        fill = "#6AAED6",
+        color = "white",
+        alpha = 0.85
+      ) +
+      stat_function(
+        fun = function(x) dnorm(x, mean = mu_hat, sd = sigma_hat) * nrow(dist_df) * (diff(range(dist_df$e_var, na.rm = TRUE)) / 35),
+        color = "#B2182B",
+        linewidth = 1
+      ) +
+      labs(
+        title = paste0("[", ev, "] Distribution of e_var with fitted Gaussian"),
+        subtitle = "Blue bars: observed distribution; red curve: Normal(mu, sigma) fit",
+        x = energy_label_for(ev),
+        y = "Count"
+      ) +
+      theme_minimal()
+  )
+
+  print(
+    ggplot(dist_df, aes(sample = e_var)) +
+      stat_qq(alpha = 0.35, color = "#333333") +
+      stat_qq_line(color = "#E6550D", linewidth = 0.8) +
+      labs(
+        title = paste0("[", ev, "] Q-Q plot vs Gaussian"),
+        subtitle = "Points close to the line indicate data are approximately Gaussian",
+        x = "Theoretical Gaussian quantiles",
+        y = "Observed quantiles"
+      ) +
+      theme_minimal()
+  )
+})
+```
+
+Interpretation guide:
+- Histogram + red Gaussian curve: close overlap through center and tails supports a Gaussian model.
+- Q-Q plot: points near the line (especially in both tails) support Gaussian assumptions.
+- Shapiro-Wilk p-value: a large p-value (commonly > 0.05) means you do not have strong evidence against Gaussianity; a very small p-value suggests non-Gaussian behavior.
+- For ANOVA specifically, the normality assumption is mainly about model residuals, so this is an initial data-level check.
+
+12. ANOVA: annual energy variable by year/state/subregion/CBSA
 
 ```{r anova-energy-panel}
 anova_df_by_var <- energy_vars |>
