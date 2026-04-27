@@ -581,7 +581,7 @@ walk(energy_vars, function(ev) {
 })
 ```
 
-10. Mixed model on asinh-transformed `energy_change`
+10. Linear model on asinh-transformed `energy_change`
 
 ```{r glmm-energy-change-asinh}
 # Ensure partisanship join exists even if section 8 has not run yet.
@@ -650,63 +650,97 @@ walk(energy_vars, function(ev) {
       z_partisan_index_dem
     )
 
-  # Gaussian mixed model should use lmer() directly (not glmer(..., family = gaussian())).
-  lmm_formula <- asinh_energy_change ~
+  # Linear model with all fixed effects (no random effects)
+  lm_formula <- asinh_energy_change ~
     z_median_income_aligned +
     z_median_income_change +
     z_partisan_index_dem +
-    (1 | state) +
-    (1 | cbsa_factor)
+    state +
+    cbsa_factor
 
-  lmm_fit <- lmer(
-    lmm_formula,
-    data = model_df,
-    REML = TRUE
-  )
+  lm_fit <- lm(lm_formula, data = model_df)
 
   cat("\n============================\n")
-  cat("MIXED MODEL [", ev, "]: asinh(energy_change)\n", sep = "")
+  cat("LINEAR MODEL [", ev, "]: asinh(energy_change)\n", sep = "")
   cat("============================\n")
   cat(
-    "Model: asinh(energy_change) ~ z_median_income_aligned + z_median_income_change + z_partisan_index_dem + (1|state) + (1|cbsa_factor)\n"
+    "Model: asinh(energy_change) ~ z_median_income_aligned + z_median_income_change + z_partisan_index_dem + state + cbsa_factor\n"
   )
   cat("Rows used:", nrow(model_df), "\n")
-  print(summary(lmm_fit))
+  print(summary(lm_fit))
+  
+  # ANOVA on the model
+  cat("\n============================\n")
+  cat("ANOVA on Linear Model\n")
+  cat("============================\n")
+  print(anova(lm_fit))
+  
+  # Drop1 test
+  cat("\n============================\n")
+  cat("Drop1 Test (LRT)\n")
+  cat("============================\n")
+  print(drop1(lm_fit, test = "Chisq"))
 
-  if (requireNamespace("lmerTest", quietly = TRUE)) {
-    cat("\nFixed-effect p-values (Satterthwaite):\n")
-    lmm_fit_p <- lmerTest::lmer(
-      lmm_formula,
-      data = model_df,
-      REML = TRUE
-    )
-    print(summary(lmm_fit_p)$coefficients)
+  # Post-hoc Tukey pairwise tests for cbsa_factor
+  cat("\n============================\n")
+  cat("TUKEY POST-HOC: cbsa_factor [", ev, "]\n", sep = "")
+  cat("============================\n")
+  
+  aov_fit <- aov(lm_formula, data = model_df)
+  tukey_cbsa <- TukeyHSD(aov_fit, which = "cbsa_factor")
+  print(tukey_cbsa)
+  
+  # Convert to tibble and show significant results
+  tukey_cbsa_tbl <- as.data.frame(tukey_cbsa$cbsa_factor) |>
+    rownames_to_column("comparison") |>
+    as_tibble() |>
+    rename(
+      diff = diff,
+      conf_low = lwr,
+      conf_high = upr,
+      p_adj = `p adj`
+    ) |>
+    arrange(p_adj)
+  
+  sig_tukey_cbsa <- tukey_cbsa_tbl |>
+    filter(p_adj < 0.05)
+  
+  cat("\nSignificant cbsa_factor pair differences (Tukey-adjusted p < 0.05):\n")
+  if (nrow(sig_tukey_cbsa) == 0) {
+    cat("None at p < 0.05.\n")
   } else {
-    cat(
-      "\nInstall 'lmerTest' to report mixed-model p-values:\n",
-      "install.packages('lmerTest')\n",
-      sep = ""
-    )
+    print(sig_tukey_cbsa)
   }
+  
+  # F-test specifically for cbsa_factor
+  cat("\n============================\n")
+  cat("F-TEST: cbsa_factor [", ev, "]\n", sep = "")
+  cat("============================\n")
+  
+  # Reduced model without cbsa_factor
+  lm_formula_reduced <- asinh_energy_change ~
+    z_median_income_aligned +
+    z_median_income_change +
+    z_partisan_index_dem +
+    state
+  
+  lm_fit_reduced <- lm(lm_formula_reduced, data = model_df)
+  
+  # Likelihood ratio test
+  f_test <- anova(lm_fit_reduced, lm_fit)
+  cat("Model comparison (reduced vs full with cbsa_factor):\n")
+  print(f_test)
+  
+  cat("\n---\n")
 
-  if (isSingular(lmm_fit, tol = 1e-5)) {
-    cat(
-      "\nNote: singular fit (random-effect variance near zero). ",
-      "Refitting with state and cbsa_factor as fixed effects for inference.\n",
-      sep = ""
-    )
-    lm_fixed_fit <- lm(
-      asinh_energy_change ~
-        z_median_income_aligned +
-        z_median_income_change +
-        z_partisan_index_dem +
-        state +
-        cbsa_factor,
-      data = model_df
-    )
-    print(summary(lm_fixed_fit))
-  }
 })
+```
+
+10a. Post-hoc tests summary
+
+```{r posthoc-summary}
+cat("Post-hoc tests complete for all energy variables.\n")
+cat("See chunk 10 output for Tukey HSD pairwise comparisons and F-tests for cbsa_factor.\n")
 ```
 
 11. Distribution check: `e_var` and fitted Gaussian model

@@ -1,0 +1,211 @@
+fips,county,state,score,subregion,total_gen
+1015,Calhoun,Alabama,2,Southern,319338.001
+1017,Chambers,Alabama,0,Southern,157850
+1019,Cherokee,Alabama,1,Southern,276815.001
+1021,Chilton,Alabama,1,Southern,719764.998
+1033,Colbert,Alabama,0,Southern,114856
+1037,Coosa,Alabama,2,Southern,585826.001
+1049,De Kalb,Alabama,2,Southern,30560.001
+1051,Elmore,Alabama,0,Southern,1770394
+1065,Hale,Alabama,2,Southern,27413
+1073,Jefferson,Alabama,1,Southern,20529081
+1077,Lauderdale,Alabama,0,Southern,2952016.001
+1079,Lawrence,Alabama,1,Southern,1611098.997
+1083,Limestone,Alabama,2,Southern,31084979
+1089,Madison,Alabama,1,Southern,17237
+1095,Marshall,Alabama,2,Southern,599319
+1103,Morgan,Alabama,0,Southern,5810729
+1111,Randolph,Alabama,0,Southern,155199
+1117,Shelby,Alabama,0,Southern,4335978
+1121,Talladega,Alabama,2,Southern,646101.999
+1123,Tallapoosa,Alabama,1,Southern,5147792
+1125,Tuscaloosa,Alabama,2,Southern,433470
+1127,Walker,Alabama,1,Southern,387891
+13013,Barrow,Georgia,1,Southern,47700
+13015,Bartow,Georgia,2,Southern,9621283
+13105,Elbert,Georgia,0,Southern,596355
+13111,Fannin,Georgia,0,Southern,39144
+13115,Floyd,Georgia,2,Southern,424880.898
+13117,Forsyth,Georgia,2,Southern,225594.001
+13119,Franklin,Georgia,2,Southern,373439
+13135,Gwinnett,Georgia,2,Southern,66084.001
+13137,Habersham,Georgia,0,Southern,315690.002
+13147,Hart,Georgia,0,Southern,741735.002
+13149,Heard,Georgia,2,Southern,15611898
+13157,Jackson,Georgia,0,Southern,185211
+13195,Madison,Georgia,2,Southern,393179
+13213,Murray,Georgia,1,Southern,8163247
+13233,Polk,Georgia,2,Southern,372644
+13241,Rabun,Georgia,2,Southern,213333
+13257,Stephens,Georgia,0,Southern,63045.999
+13291,Union,Georgia,0,Southern,50932
+21049,Clark,Kentucky,0,Central,597536
+21065,Estill,Kentucky,1,Central,9685
+21089,Greenup,Kentucky,2,Central,15675
+21125,Laurel,Kentucky,0,Central,104436
+21127,Lawrence,Kentucky,1,Central,1112180
+21199,Pulaski,Kentucky,2,Central,478612
+21205,Rowan,Kentucky,0,Central,6402
+21207,Russell,Kentucky,0,Central,868711.002
+24001,Allegany,Maryland,2,Northern,1251759
+24023,Garrett,Maryland,2,Northern,541874
+24043,Washington,Maryland,2,Northern,78199
+28009,Benton,Mississippi,1,Southern,4180909
+28017,Chickasaw,Mississippi,2,Southern,14278
+28019,Choctaw,Mississippi,1,Southern,9940593
+28069,Kemper,Mississippi,2,Southern,4151097
+28087,Lowndes,Mississippi,1,Southern,4902361
+28107,Panola,Mississippi,0,Southern,3200004
+36003,Allegany,New York,2,Northern,58094
+36007,Broome,New York,2,Northern,36884
+36009,Cattaraugus,New York,1,Northern,61284
+36013,Chautauqua,New York,2,Northern,449054.002
+36015,Chemung,New York,2,Northern,19805
+36017,Chenango,New York,1,Northern,1150
+36023,Cortland,New York,2,Northern,8799
+36077,Otsego,New York,2,Northern,2991
+36095,Schoharie,New York,2,Northern,2960
+36097,Schuyler,New York,2,Northern,9793
+36101,Steuben,New York,1,Northern,336094
+36107,Tioga,New York,2,Northern,32701
+36109,Tompkins,New York,1,Northern,276135
+37003,Alexander,North Carolina,0,South Central,22013
+37021,Buncombe,North Carolina,1,South Central,3806980
+37023,Burke,North Carolina,0,South Central,77429.001
+37027,Caldwell,North Carolina,0,South Central,75661.001
+37035,Catawba,North Carolina,0,South Central,7368329
+37039,Cherokee,North Carolina,2,South Central,385990
+37043,Clay,North Carolina,2,South Central,60658.001
+37045,Cleveland,North Carolina,0,South Central,8668641
+37059,Davie,North Carolina,2,South Central,69910
+37067,Forsyth,North Carolina,1,South Central,79878
+37075,Graham,North Carolina,1,South Central,811865.001
+37087,Haywood,North Carolina,1,South Central,705609.001
+37089,Henderson,North Carolina,2,South Central,28485
+37099,Jackson,North Carolina,1,South Central,169244
+37113,Macon,North Carolina,0,South Central,222212
+37115,Madison,North Carolina,2,South Central,1116
+37149,Polk,North Carolina,1,South Central,15862
+37161,Rutherford,North Carolina,2,South Central,230778
+37169,Stokes,North Carolina,1,South Central,9026884
+37171,Surry,North Carolina,1,South Central,33936
+37173,Swain,North Carolina,0,South Central,1328369.999
+37197,Yadkin,North Carolina,1,South Central,38392
+39007,Ashtabula,Ohio,1,Northern,193957
+39015,Brown,Ohio,0,North Central,204656.001
+39019,Carroll,Ohio,1,Northern,4771737
+39025,Clermont,Ohio,2,North Central,4575243
+39029,Columbiana,Ohio,0,Northern,2198702
+39053,Gallia,Ohio,1,North Central,18841008
+39081,Jefferson,Ohio,0,Northern,14722996
+39087,Lawrence,Ohio,0,North Central,9510071
+39099,Mahoning,Ohio,2,Northern,157587.004
+39105,Meigs,Ohio,1,North Central,207829
+39111,Monroe,Ohio,2,North Central,695993
+39119,Muskingum,Ohio,2,Northern,4097994
+39127,Perry,Ohio,1,North Central,30644.999
+39141,Ross,Ohio,1,North Central,348550.267
+39145,Scioto,Ohio,2,North Central,686042
+39155,Trumbull,Ohio,0,Northern,6022677
+39157,Tuscarawas,Ohio,0,Northern,59361.002
+39163,Vinton,Ohio,1,North Central,566141
+39167,Washington,Ohio,0,North Central,11012734
+42003,Allegheny,Pennsylvania,2,Northern,5757457
+42005,Armstrong,Pennsylvania,2,Northern,8784696
+42007,Beaver,Pennsylvania,2,Northern,14618865.78
+42013,Blair,Pennsylvania,2,Northern,366028
+42015,Bradford,Pennsylvania,2,Northern,6247906.002
+42021,Cambria,Pennsylvania,2,Northern,9345301
+42025,Carbon,Pennsylvania,2,Northern,151895
+42027,Centre,Pennsylvania,1,Northern,68399.69
+42031,Clarion,Pennsylvania,2,Northern,66351.999
+42033,Clearfield,Pennsylvania,1,Northern,634973.001
+42047,Elk,Pennsylvania,1,Northern,205504
+42049,Erie,Pennsylvania,2,Northern,32226
+42051,Fayette,Pennsylvania,0,Northern,5320534
+42059,Greene,Pennsylvania,0,Northern,1891898
+42061,Huntingdon,Pennsylvania,2,Northern,95421
+42063,Indiana,Pennsylvania,2,Northern,14578454
+42069,Lackawanna,Pennsylvania,1,Northern,10723390
+42073,Lawrence,Pennsylvania,1,Northern,6669989.1
+42079,Luzerne,Pennsylvania,0,Northern,27638646
+42081,Lycoming,Pennsylvania,2,Northern,6050526.3
+42085,Mercer,Pennsylvania,2,Northern,3463
+42089,Monroe,Pennsylvania,2,Northern,3404
+42093,Montour,Pennsylvania,2,Northern,1260335
+42097,Northumberland,Pennsylvania,2,Northern,2072
+42105,Potter,Pennsylvania,1,Northern,255122
+42107,Schuylkill,Pennsylvania,1,Northern,1684133.992
+42109,Snyder,Pennsylvania,0,Northern,7544938
+42111,Somerset,Pennsylvania,0,Northern,1015526
+42115,Susquehanna,Pennsylvania,1,Northern,39064
+42117,Tioga,Pennsylvania,1,Northern,237126
+42119,Union,Pennsylvania,2,Northern,38173
+42121,Venango,Pennsylvania,2,Northern,336022
+42123,Warren,Pennsylvania,2,Northern,7127
+42125,Washington,Pennsylvania,1,Northern,39486
+42127,Wayne,Pennsylvania,0,Northern,228366
+42129,Westmoreland,Pennsylvania,0,Northern,7164123
+42131,Wyoming,Pennsylvania,1,Northern,1266660
+45007,Anderson,South Carolina,2,Southern,10908780
+45021,Cherokee,South Carolina,0,Southern,864430.349
+45045,Greenville,South Carolina,0,Southern,35022
+45073,Oconee,South Carolina,1,Southern,22208091
+45077,Pickens,South Carolina,1,Southern,95578
+45083,Spartanburg,South Carolina,2,Southern,73224
+45087,Union,South Carolina,1,Southern,138761.999
+47001,Anderson,Tennessee,2,Central,1317985.001
+47009,Blount,Tennessee,2,South Central,941522.001
+47019,Carter,Tennessee,0,South Central,159326.001
+47027,Clay,Tennessee,0,Central,145269
+47041,De Kalb,Tennessee,1,South Central,387940.999
+47051,Franklin,Tennessee,0,South Central,42973
+47065,Hamilton,Tennessee,2,South Central,18361088
+47073,Hawkins,Tennessee,2,South Central,4015831
+47089,Jefferson,Tennessee,1,South Central,385810
+47093,Knox,Tennessee,1,South Central,31525
+47105,Loudon,Tennessee,2,South Central,1429882
+47107,McMinn,Tennessee,2,South Central,344293.489
+47115,Marion,Tennessee,2,South Central,555275.999
+47139,Polk,Tennessee,1,South Central,1054535
+47143,Rhea,Tennessee,0,South Central,18731224
+47145,Roane,Tennessee,0,South Central,2775508
+47155,Sevier,Tennessee,0,South Central,555823
+47159,Smith,Tennessee,1,South Central,431871.999
+47163,Sullivan,Tennessee,1,South Central,1590622
+47177,Warren,Tennessee,0,South Central,127467
+47179,Washington,Tennessee,0,South Central,25989
+51005,Alleghany + Covington city,Virginia,2,South Central,996
+51027,Buchanan,Virginia,2,Central,396502
+51035,Carroll + Galax city,Virginia,1,South Central,74744.001
+51071,Giles,Virginia,2,South Central,172350
+51077,Grayson,Virginia,2,South Central,17907
+51089,Henry + Martinsville city,Virginia,1,South Central,13060
+51091,Highland,Virginia,1,South Central,188
+51121,Montgomery + Radford city,Virginia,1,South Central,32129
+51141,Patrick,Virginia,0,South Central,24501.999
+51155,Pulaski,Virginia,1,South Central,254440.002
+51167,Russell,Virginia,0,Central,133136
+51191,Washington + Bristol city,Virginia,2,South Central,58017
+51195,Wise + Norton city,Virginia,2,Central,953703
+54001,Barbour,West Virginia,1,North Central,181816
+54003,Berkeley,West Virginia,2,North Central,6288
+54019,Fayette,West Virginia,1,North Central,516227.998
+54023,Grant,West Virginia,2,North Central,6378854
+54025,Greenbrier,West Virginia,2,North Central,408391
+54033,Harrison,West Virginia,1,North Central,11494151
+54037,Jefferson,West Virginia,0,North Central,17697
+54039,Kanawha,West Virginia,1,North Central,109851
+54049,Marion,West Virginia,0,North Central,631409
+54051,Marshall,West Virginia,0,North Central,5521693.99
+54053,Mason,West Virginia,2,North Central,7132758
+54057,Mineral,West Virginia,0,North Central,68631
+54061,Monongalia,West Virginia,0,North Central,10760296
+54067,Nicholas,West Virginia,1,North Central,139455
+54073,Pleasants,West Virginia,0,North Central,9100804
+54079,Putnam,West Virginia,1,North Central,12115502
+54081,Raleigh,West Virginia,1,North Central,10166
+54093,Tucker,West Virginia,1,North Central,91219
+54099,Wayne,West Virginia,2,Central,618108
+54103,Wetzel,West Virginia,1,North Central,228487
+54107,Wood,West Virginia,2,North Central,316597
