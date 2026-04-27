@@ -604,6 +604,14 @@ partisan_join_glmm <- partisan_join |>
     }
   )
 
+# Load hasplan data
+hasplan_df <- read_csv("hasplan.csv", show_col_types = FALSE) |>
+  clean_names() |>
+  transmute(
+    fips = str_pad(fips, 5, pad = "0"),
+    hasplan_score = factor(score)  # 3 possible states as factor
+  )
+
 walk(energy_vars, function(ev) {
   model_df <- analysis_county_energy_by_var[[ev]] |>
     left_join(
@@ -624,6 +632,7 @@ walk(energy_vars, function(ev) {
       by = "fips"
     ) |>
     left_join(partisan_join_glmm, by = "fips") |>
+    left_join(hasplan_df, by = "fips") |>
     mutate(
       asinh_energy_change = asinh(energy_change),
       state = factor(state),
@@ -635,8 +644,24 @@ walk(energy_vars, function(ev) {
       median_income_change,
       partisan_index_dem,
       state,
-      cbsa_factor
+      cbsa_factor,
+      hasplan_score
     )
+  
+  # Check for counties missing from hasplan dataset
+  all_counties <- analysis_county_energy_by_var[[ev]] |> pull(fips) |> unique()
+  hasplan_counties <- hasplan_df |> pull(fips) |> unique()
+  missing_counties <- setdiff(all_counties, hasplan_counties)
+  
+  if (length(missing_counties) > 0) {
+    cat("\n⚠️ WARNING [", ev, "]: ", length(missing_counties), 
+        " counties present in other variables are MISSING from hasplan dataset:\n", sep = "")
+    cat(paste(head(missing_counties, 20), collapse = ", "))
+    if (length(missing_counties) > 20) {
+      cat("... and", length(missing_counties) - 20, "more")
+    }
+    cat("\n")
+  }
 
   model_df <- model_df |>
     mutate(
@@ -656,7 +681,8 @@ walk(energy_vars, function(ev) {
     z_median_income_change +
     z_partisan_index_dem +
     state +
-    cbsa_factor
+    cbsa_factor +
+    hasplan_score
 
   lm_fit <- lm(lm_formula, data = model_df)
 
@@ -664,7 +690,7 @@ walk(energy_vars, function(ev) {
   cat("LINEAR MODEL [", ev, "]: asinh(energy_change)\n", sep = "")
   cat("============================\n")
   cat(
-    "Model: asinh(energy_change) ~ z_median_income_aligned + z_median_income_change + z_partisan_index_dem + state + cbsa_factor\n"
+    "Model: asinh(energy_change) ~ z_median_income_aligned + z_median_income_change + z_partisan_index_dem + state + cbsa_factor + hasplan_score\n"
   )
   cat("Rows used:", nrow(model_df), "\n")
   print(summary(lm_fit))
@@ -722,7 +748,8 @@ walk(energy_vars, function(ev) {
     z_median_income_aligned +
     z_median_income_change +
     z_partisan_index_dem +
-    state
+    state +
+    hasplan_score
   
   lm_fit_reduced <- lm(lm_formula_reduced, data = model_df)
   

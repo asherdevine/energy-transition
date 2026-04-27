@@ -7,6 +7,7 @@ fips,county,state,score,subregion,total_gen
 1037,Coosa,Alabama,2,Southern,585826.001
 1049,De Kalb,Alabama,2,Southern,30560.001
 1051,Elmore,Alabama,0,Southern,1770394
+1055,Etowah,Alabama,0,Southern,
 1065,Hale,Alabama,2,Southern,27413
 1073,Jefferson,Alabama,1,Southern,20529081
 1077,Lauderdale,Alabama,0,Southern,2952016.001
@@ -63,6 +64,7 @@ fips,county,state,score,subregion,total_gen
 36015,Chemung,New York,2,Northern,19805
 36017,Chenango,New York,1,Northern,1150
 36023,Cortland,New York,2,Northern,8799
+36025,Delaware,New York,2,Northern,
 36077,Otsego,New York,2,Northern,2991
 36095,Schoharie,New York,2,Northern,2960
 36097,Schuyler,New York,2,Northern,9793
@@ -161,6 +163,7 @@ fips,county,state,score,subregion,total_gen
 47041,De Kalb,Tennessee,1,South Central,387940.999
 47051,Franklin,Tennessee,0,South Central,42973
 47065,Hamilton,Tennessee,2,South Central,18361088
+47067,Hancock,Tennessee,0,South Central,
 47073,Hawkins,Tennessee,2,South Central,4015831
 47089,Jefferson,Tennessee,1,South Central,385810
 47093,Knox,Tennessee,1,South Central,31525
@@ -176,6 +179,7 @@ fips,county,state,score,subregion,total_gen
 47177,Warren,Tennessee,0,South Central,127467
 47179,Washington,Tennessee,0,South Central,25989
 51005,Alleghany + Covington city,Virginia,2,South Central,996
+51017,Bath,Virginia,0,,
 51027,Buchanan,Virginia,2,Central,396502
 51035,Carroll + Galax city,Virginia,1,South Central,74744.001
 51071,Giles,Virginia,2,South Central,172350
