@@ -29,6 +29,7 @@ library(janitor)
 library(spdep)
 library(ggplot2)
 library(lme4)
+library(emmeans)
 
 options(tigris_use_cache = TRUE)
 
@@ -563,18 +564,18 @@ walk(energy_vars, function(ev) {
 9. Metro vs micro vs rural (Census CBSA delineations)
 
 ```{r metro-micro-mean-sd-plot}
-# # CBSA polygons from ACS (loaded once in section 3, cached in census_cache)
-# 
-# # Classify counties by whether their interior point lies in a metro/micro CBSA polygon
-# county_cbsa <- counties_sf |>
-#   st_point_on_surface() |>
-#   st_join(cbsa_sf, join = st_within, left = TRUE) |>
-#   st_drop_geometry() |>
-#   transmute(
-#     fips = GEOID,
-#     cbsa_type = replace_na(cbsa_type, "Rural")
-#   )
-# 
+# CBSA polygons from ACS (loaded once in section 3, cached in census_cache)
+
+# Classify counties by whether their interior point lies in a metro/micro CBSA polygon
+county_cbsa <- counties_sf |>
+  st_point_on_surface() |>
+  st_join(cbsa_sf, join = st_within, left = TRUE) |>
+  st_drop_geometry() |>
+  transmute(
+    fips = GEOID,
+    cbsa_type = replace_na(cbsa_type, "Rural")
+  )
+ 
 # walk(energy_vars, function(ev) {
 #   analysis_energy_change <- analysis_energy_change_by_var[[ev]]
 #   analysis_cbsa <- analysis_energy_change |>
@@ -727,6 +728,12 @@ walk(energy_vars, function(ev) {
 
   lm_fit <- lm(lm_formula, data = model_df)
 
+  partisan_mean <- mean(model_df$partisan_index_dem, na.rm = TRUE)
+  partisan_sd <- sd(model_df$partisan_index_dem, na.rm = TRUE)
+
+  partisanship_grid <- c(0, 0.25, 0.5, 0.75, 1)
+  partisanship_at <- (partisanship_grid - partisan_mean) / partisan_sd
+
   cat("\n============================\n")
   cat("LINEAR MODEL [", ev, "]: asinh(energy_change)\n", sep = "")
   cat("============================\n")
@@ -735,6 +742,96 @@ walk(energy_vars, function(ev) {
   )
   cat("Rows used:", nrow(model_df), "\n")
   print(summary(lm_fit))
+
+  cat("\n============================\n")
+  cat("EMMEANS (BACK-TRANSFORMED): cbsa_factor [", ev, "]\n", sep = "")
+  cat("============================\n")
+  emm_cbsa <- emmeans(lm_fit, ~ cbsa_factor)
+  emm_cbsa_bt <- summary(emm_cbsa) |>
+    as_tibble() |>
+    mutate(
+      energy_change_est = sinh(emmean),
+      energy_change_lower = sinh(lower.CL),
+      energy_change_upper = sinh(upper.CL)
+    )
+  print(emm_cbsa_bt)
+
+  cat("\n============================\n")
+  cat("EMMEANS (BACK-TRANSFORMED): partisan_index_dem grid [", ev, "]\n", sep = "")
+  cat("============================\n")
+  emm_partisan <- emmeans(
+    lm_fit,
+    ~ z_partisan_index_dem,
+    at = list(z_partisan_index_dem = partisanship_at)
+  )
+  emm_partisan_bt <- summary(emm_partisan) |>
+    as_tibble() |>
+    mutate(
+      partisan_index_dem = partisanship_grid,
+      energy_change_est = sinh(emmean),
+      energy_change_lower = sinh(lower.CL),
+      energy_change_upper = sinh(upper.CL)
+    ) |>
+    select(
+      partisan_index_dem,
+      energy_change_est,
+      energy_change_lower,
+      energy_change_upper,
+      everything()
+    )
+  print(emm_partisan_bt)
+
+  if (ev == "renewable_mwh") {
+    print(
+      ggplot(
+        emm_partisan_bt,
+        aes(x = partisan_index_dem, y = energy_change_est)
+      ) +
+        geom_ribbon(
+          aes(ymin = energy_change_lower, ymax = energy_change_upper),
+          fill = "#9ECAE1",
+          alpha = 0.35
+        ) +
+        geom_line(color = "#08519C", linewidth = 0.9) +
+        geom_point(color = "#08519C", size = 2) +
+        scale_x_continuous(
+          limits = c(0, 1),
+          breaks = seq(0, 1, by = 0.2),
+          labels = scales::label_number(accuracy = 0.1)
+        ) +
+        scale_y_continuous(labels = scales::label_comma()) +
+        labs(
+          title = "Renewables: adjusted energy change vs partisan index",
+          subtitle = "Line/ribbon show back-transformed EMM estimates and 95% CI",
+          x = "Partisan index (0 to 1)",
+          y = "Estimated change in renewable generation (MWh)"
+        ) +
+        theme_minimal()
+    )
+  }
+
+  if (ev == "COAL") {
+    print(
+      ggplot(
+        emm_cbsa_bt,
+        aes(x = cbsa_factor, y = energy_change_est, fill = cbsa_factor)
+      ) +
+        geom_col(width = 0.7, show.legend = FALSE) +
+        geom_errorbar(
+          aes(ymin = energy_change_lower, ymax = energy_change_upper),
+          width = 0.18,
+          linewidth = 0.65
+        ) +
+        scale_y_continuous(labels = scales::label_comma()) +
+        labs(
+          title = "Coal: adjusted energy change by CBSA category",
+          subtitle = "Bars are back-transformed EMM means; error bars are 95% CI",
+          x = "CBSA category",
+          y = "Estimated change in coal generation (MWh)"
+        ) +
+        theme_minimal()
+    )
+  }
   
   # ANOVA on the model
   cat("\n============================\n")
@@ -936,79 +1033,79 @@ Interpretation guide:
 ```
 
 ```{r tukey-posthoc-state}
-walk(energy_vars, function(ev) {
-  anova_df <- anova_df_by_var[[ev]]
-
-  anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-  tukey_state <- TukeyHSD(anova_model_aov, which = "state")
-
-  cat("\n============================\n")
-  cat("TUKEY POST HOC: state [", ev, "]\n", sep = "")
-  cat("============================\n")
-  print(tukey_state)
-
-  tukey_state_tbl <- as.data.frame(tukey_state$state) |>
-    rownames_to_column("comparison") |>
-    as_tibble() |>
-    rename(
-      diff = diff,
-      conf_low = lwr,
-      conf_high = upr,
-      p_adj = `p adj`
-    ) |>
-    arrange(p_adj)
-
-  sig_tukey_state <- tukey_state_tbl |>
-    filter(p_adj < 0.05)
-
-  cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
-  if (nrow(sig_tukey_state) == 0) {
-    cat("None at p < 0.05.\n")
-  } else {
-    print(sig_tukey_state)
-  }
-
-  plot(tukey_state, las = 1)
-  title(main = paste0("Tukey HSD (state): ", ev))
-})
+# walk(energy_vars, function(ev) {
+#   anova_df <- anova_df_by_var[[ev]]
+# 
+#   anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+#   tukey_state <- TukeyHSD(anova_model_aov, which = "state")
+# 
+#   cat("\n============================\n")
+#   cat("TUKEY POST HOC: state [", ev, "]\n", sep = "")
+#   cat("============================\n")
+#   print(tukey_state)
+# 
+#   tukey_state_tbl <- as.data.frame(tukey_state$state) |>
+#     rownames_to_column("comparison") |>
+#     as_tibble() |>
+#     rename(
+#       diff = diff,
+#       conf_low = lwr,
+#       conf_high = upr,
+#       p_adj = `p adj`
+#     ) |>
+#     arrange(p_adj)
+# 
+#   sig_tukey_state <- tukey_state_tbl |>
+#     filter(p_adj < 0.05)
+# 
+#   cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
+#   if (nrow(sig_tukey_state) == 0) {
+#     cat("None at p < 0.05.\n")
+#   } else {
+#     print(sig_tukey_state)
+#   }
+# 
+#   plot(tukey_state, las = 1)
+#   title(main = paste0("Tukey HSD (state): ", ev))
+# })
 ```
 
 ```{r tukey-posthoc-cbsa}
-walk(energy_vars, function(ev) {
-  anova_df <- anova_df_by_var[[ev]]
-
-  anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-  tukey_cbsa <- TukeyHSD(anova_model_aov, which = "cbsa_factor")
-
-  cat("\n============================\n")
-  cat("TUKEY POST HOC: cbsa_factor [", ev, "]\n", sep = "")
-  cat("============================\n")
-  print(tukey_cbsa)
-
-  tukey_cbsa_tbl <- as.data.frame(tukey_cbsa$cbsa_factor) |>
-    rownames_to_column("comparison") |>
-    as_tibble() |>
-    rename(
-      diff = diff,
-      conf_low = lwr,
-      conf_high = upr,
-      p_adj = `p adj`
-    ) |>
-    arrange(p_adj)
-
-  sig_tukey_cbsa <- tukey_cbsa_tbl |>
-    filter(p_adj < 0.05)
-
-  cat("\nSignificant cbsa_factor pair differences (Tukey-adjusted p < 0.05):\n")
-  if (nrow(sig_tukey_cbsa) == 0) {
-    cat("None at p < 0.05.\n")
-  } else {
-    print(sig_tukey_cbsa)
-  }
-
-  plot(tukey_cbsa, las = 1)
-  title(main = paste0("Tukey HSD (cbsa_factor): ", ev))
-})
+# walk(energy_vars, function(ev) {
+#   anova_df <- anova_df_by_var[[ev]]
+# 
+#   anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+#   tukey_cbsa <- TukeyHSD(anova_model_aov, which = "cbsa_factor")
+# 
+#   cat("\n============================\n")
+#   cat("TUKEY POST HOC: cbsa_factor [", ev, "]\n", sep = "")
+#   cat("============================\n")
+#   print(tukey_cbsa)
+# 
+#   tukey_cbsa_tbl <- as.data.frame(tukey_cbsa$cbsa_factor) |>
+#     rownames_to_column("comparison") |>
+#     as_tibble() |>
+#     rename(
+#       diff = diff,
+#       conf_low = lwr,
+#       conf_high = upr,
+#       p_adj = `p adj`
+#     ) |>
+#     arrange(p_adj)
+# 
+#   sig_tukey_cbsa <- tukey_cbsa_tbl |>
+#     filter(p_adj < 0.05)
+# 
+#   cat("\nSignificant cbsa_factor pair differences (Tukey-adjusted p < 0.05):\n")
+#   if (nrow(sig_tukey_cbsa) == 0) {
+#     cat("None at p < 0.05.\n")
+#   } else {
+#     print(sig_tukey_cbsa)
+#   }
+# 
+#   plot(tukey_cbsa, las = 1)
+#   title(main = paste0("Tukey HSD (cbsa_factor): ", ev))
+# })
 ```
 
 11. Panel model: county and year fixed effects (clustered SE)
