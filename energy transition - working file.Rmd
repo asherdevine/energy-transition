@@ -177,7 +177,7 @@ We load plant-level eGRID data for the baseline and analysis years, aggregate to
 load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewable_mwh", "co2_tons", "COAL")) {
   energy_var <- match.arg(energy_var)
 
-  # Read one year, normalize county FIPS, and aggregate selected energy metric.
+  # Read one year and normalize county FIPS.
   load_plants_for_year <- function(year, energy_var) {
     file_name <- file.path("egrid files", paste0("eGRID", year, "_data.xlsx"))
     sheets <- excel_sheets(file_name)
@@ -214,19 +214,49 @@ load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewa
     }
 
     plants |>
-      filter(!is.na(energy_value)) |>
+      mutate(
+        is_energy_producing = !is.na(plngenan) & plngenan > 0,
+        energy_value = replace_na(energy_value, 0)
+      ) |>
       group_by(fips) |>
-      summarise(energy = sum(energy_value, na.rm = TRUE), .groups = "drop")
+      summarise(
+        energy = sum(energy_value, na.rm = TRUE),
+        is_energy_producing = any(is_energy_producing, na.rm = TRUE),
+        .groups = "drop"
+      )
   }
 
-  county_baseline <- load_plants_for_year(baseline_year, energy_var) |>
-    rename(energy_baseline = energy)
+  county_baseline <- load_plants_for_year(baseline_year, energy_var)
+  county_analysis <- load_plants_for_year(analysis_year, energy_var)
 
-  county_analysis <- load_plants_for_year(analysis_year, energy_var) |>
-    rename(energy_end = energy)
+  producing_fips <- full_join(
+    county_baseline |> select(fips, prod_base = is_energy_producing),
+    county_analysis |> select(fips, prod_end = is_energy_producing),
+    by = "fips"
+  ) |>
+    mutate(
+      prod_base = replace_na(prod_base, FALSE),
+      prod_end = replace_na(prod_end, FALSE),
+      include_county = prod_base | prod_end
+    ) |>
+    filter(include_county) |>
+    select(fips)
 
-  county_change <- county_baseline |>
-    inner_join(county_analysis, by = "fips") |>
+  county_change <- producing_fips |>
+    left_join(
+      county_baseline |>
+        select(fips, energy_baseline = energy),
+      by = "fips"
+    ) |>
+    left_join(
+      county_analysis |>
+        select(fips, energy_end = energy),
+      by = "fips"
+    ) |>
+    mutate(
+      energy_baseline = replace_na(energy_baseline, 0),
+      energy_end = replace_na(energy_end, 0)
+    ) |>
     mutate(energy_change = energy_end - energy_baseline)
 
   county_change
@@ -414,6 +444,10 @@ state_fips <- geography_df |>
 counties_sf <- counties(state = state_fips, cb = TRUE, year = 2020) |>
   st_transform(crs = 5070)
 
+states_sf <- states(cb = TRUE, year = 2020) |>
+  filter(STATEFP %in% state_fips) |>
+  st_transform(crs = 5070)
+
 counties_map_change_by_var <- analysis_energy_change_by_var |>
   map(~ counties_sf |>
     inner_join(
@@ -421,6 +455,11 @@ counties_map_change_by_var <- analysis_energy_change_by_var |>
         select(fips, energy_change),
       by = c("GEOID" = "fips")
     ))
+
+geography_outline <- counties_sf |>
+  semi_join(geography_df, by = c("GEOID" = "fips")) |>
+  st_union() |>
+  st_as_sf()
 ```
 
 ```{r map-nf-share-change-plot}
@@ -428,14 +467,16 @@ walk(energy_vars, function(ev) {
   counties_map_change <- counties_map_change_by_var[[ev]]
   print(
     ggplot() +
-      geom_sf(data = counties_sf, fill = "grey95", color = "grey80", linewidth = 0.05) +
+      geom_sf(data = counties_sf, fill = "grey95", color = "grey95", linewidth = 0.05) +
+      geom_sf(data = states_sf, fill = NA, color = "grey80", linewidth = 0.25) +
       geom_sf(data = counties_map_change, aes(fill = energy_change), color = "grey35", linewidth = 0.08) +
+      geom_sf(data = geography_outline, fill = NA, color = "grey20", linewidth = 0.4) +
       scale_fill_gradient2(
-        low = "#3B8132",
+        low = "#0C5000",
         mid = "#f7f7f7",
         high = "#7F2B0A",
         midpoint = 0,
-        name = "Change in\nenergy variable",
+        name = paste0("Change in \n", ev),
         labels = scales::label_comma()
       ) +
       theme_void() +
@@ -522,63 +563,63 @@ walk(energy_vars, function(ev) {
 9. Metro vs micro vs rural (Census CBSA delineations)
 
 ```{r metro-micro-mean-sd-plot}
-# CBSA polygons from ACS (loaded once in section 3, cached in census_cache)
-
-# Classify counties by whether their interior point lies in a metro/micro CBSA polygon
-county_cbsa <- counties_sf |>
-  st_point_on_surface() |>
-  st_join(cbsa_sf, join = st_within, left = TRUE) |>
-  st_drop_geometry() |>
-  transmute(
-    fips = GEOID,
-    cbsa_type = replace_na(cbsa_type, "Rural")
-  )
-
-walk(energy_vars, function(ev) {
-  analysis_energy_change <- analysis_energy_change_by_var[[ev]]
-  analysis_cbsa <- analysis_energy_change |>
-    left_join(county_cbsa, by = "fips") |>
-    mutate(
-      county_type = cbsa_type,
-      county_type = factor(county_type, levels = c("Metropolitan", "Micropolitan", "Rural"))
-    )
-
-  cbsa_summary <- analysis_cbsa |>
-    group_by(county_type) |>
-    summarise(
-      n = n(),
-      mean_change = mean(energy_change, na.rm = TRUE),
-      sd_change = sd(energy_change, na.rm = TRUE),
-      .groups = "drop"
-    )
-
-  print(
-    ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) +
-      geom_col(width = 0.7, show.legend = FALSE) +
-      geom_errorbar(
-        aes(ymin = mean_change - sd_change, ymax = mean_change + sd_change),
-        width = 0.18,
-        linewidth = 0.6
-      ) +
-      scale_y_continuous(labels = scales::label_comma()) +
-      scale_fill_manual(values = c("Metropolitan" = "#E63400", "Micropolitan" = "#FF8B0F", "Rural" = "#6C3400")) +
-      labs(
-        title = paste0(
-          "[",
-          ev,
-          "] Mean change in energy variable by county CBSA type, ",
-          egrid_change_baseline_year,
-          "–",
-          analysis_year
-        ),
-        subtitle = "Error bars show +/- 1 standard deviation",
-        x = NULL,
-        y = energy_label_for(ev),
-        caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
-      ) +
-      theme_minimal()
-  )
-})
+# # CBSA polygons from ACS (loaded once in section 3, cached in census_cache)
+# 
+# # Classify counties by whether their interior point lies in a metro/micro CBSA polygon
+# county_cbsa <- counties_sf |>
+#   st_point_on_surface() |>
+#   st_join(cbsa_sf, join = st_within, left = TRUE) |>
+#   st_drop_geometry() |>
+#   transmute(
+#     fips = GEOID,
+#     cbsa_type = replace_na(cbsa_type, "Rural")
+#   )
+# 
+# walk(energy_vars, function(ev) {
+#   analysis_energy_change <- analysis_energy_change_by_var[[ev]]
+#   analysis_cbsa <- analysis_energy_change |>
+#     left_join(county_cbsa, by = "fips") |>
+#     mutate(
+#       county_type = cbsa_type,
+#       county_type = factor(county_type, levels = c("Metropolitan", "Micropolitan", "Rural"))
+#     )
+# 
+#   cbsa_summary <- analysis_cbsa |>
+#     group_by(county_type) |>
+#     summarise(
+#       n = n(),
+#       mean_change = mean(energy_change, na.rm = TRUE),
+#       sd_change = sd(energy_change, na.rm = TRUE),
+#       .groups = "drop"
+#     )
+# 
+#   print(
+#     ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) +
+#       geom_col(width = 0.7, show.legend = FALSE) +
+#       geom_errorbar(
+#         aes(ymin = mean_change - sd_change, ymax = mean_change + sd_change),
+#         width = 0.18,
+#         linewidth = 0.6
+#       ) +
+#       scale_y_continuous(labels = scales::label_comma()) +
+#       scale_fill_manual(values = c("Metropolitan" = "#E63400", "Micropolitan" = "#FF8B0F", "Rural" = "#6C3400")) +
+#       labs(
+#         title = paste0(
+#           "[",
+#           ev,
+#           "] Mean change in energy variable by county CBSA type, ",
+#           egrid_change_baseline_year,
+#           "–",
+#           analysis_year
+#         ),
+#         subtitle = "Error bars show +/- 1 standard deviation",
+#         x = NULL,
+#         y = energy_label_for(ev),
+#         caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
+#       ) +
+#       theme_minimal()
+#   )
+# })
 ```
 
 10. Linear model on asinh-transformed `energy_change`
@@ -766,76 +807,76 @@ walk(energy_vars, function(ev) {
 10a. Post-hoc tests summary
 
 ```{r posthoc-summary}
-cat("Post-hoc tests complete for all energy variables.\n")
-cat("See chunk 10 output for Tukey HSD pairwise comparisons and F-tests for cbsa_factor.\n")
+# cat("Post-hoc tests complete for all energy variables.\n")
+# cat("See chunk 10 output for Tukey HSD pairwise comparisons and F-tests for cbsa_factor.\n")
 ```
 
 11. Distribution check: `e_var` and fitted Gaussian model
 
 ```{r evar-gaussian-check}
-walk(energy_vars, function(ev) {
-  egrid_panel <- load_egrid_panel(
-    baseline_year = egrid_change_baseline_year,
-    analysis_year = analysis_year,
-    energy_var = ev
-  )
-
-  dist_df <- egrid_panel |>
-    drop_na(e_var)
-
-  mu_hat <- mean(dist_df$e_var, na.rm = TRUE)
-  sigma_hat <- sd(dist_df$e_var, na.rm = TRUE)
-
-  cat("\n============================\n")
-  cat("GAUSSIAN CHECK [", ev, "]\n", sep = "")
-  cat("============================\n")
-  cat("n =", nrow(dist_df), "\n")
-  cat("mean (mu) =", round(mu_hat, 4), "\n")
-  cat("sd (sigma) =", round(sigma_hat, 4), "\n")
-
-  if (nrow(dist_df) >= 3 && nrow(dist_df) <= 5000) {
-    shapiro_out <- shapiro.test(dist_df$e_var)
-    cat("Shapiro-Wilk p-value =", signif(shapiro_out$p.value, 4), "\n")
-  } else {
-    cat("Shapiro-Wilk skipped (requires 3 <= n <= 5000).\n")
-  }
-
-  print(
-    ggplot(dist_df, aes(x = e_var)) +
-      geom_histogram(
-        aes(y = after_stat(count)),
-        bins = 35,
-        fill = "#6AAED6",
-        color = "white",
-        alpha = 0.85
-      ) +
-      stat_function(
-        fun = function(x) dnorm(x, mean = mu_hat, sd = sigma_hat) * nrow(dist_df) * (diff(range(dist_df$e_var, na.rm = TRUE)) / 35),
-        color = "#B2182B",
-        linewidth = 1
-      ) +
-      labs(
-        title = paste0("[", ev, "] Distribution of e_var with fitted Gaussian"),
-        subtitle = "Blue bars: observed distribution; red curve: Normal(mu, sigma) fit",
-        x = energy_label_for(ev),
-        y = "Count"
-      ) +
-      theme_minimal()
-  )
-
-  print(
-    ggplot(dist_df, aes(sample = e_var)) +
-      stat_qq(alpha = 0.35, color = "#333333") +
-      stat_qq_line(color = "#E6550D", linewidth = 0.8) +
-      labs(
-        title = paste0("[", ev, "] Q-Q plot vs Gaussian"),
-        subtitle = "Points close to the line indicate data are approximately Gaussian",
-        x = "Theoretical Gaussian quantiles",
-        y = "Observed quantiles"
-      ) +
-      theme_minimal()
-  )
-})
+# walk(energy_vars, function(ev) {
+#   egrid_panel <- load_egrid_panel(
+#     baseline_year = egrid_change_baseline_year,
+#     analysis_year = analysis_year,
+#     energy_var = ev
+#   )
+# 
+#   dist_df <- egrid_panel |>
+#     drop_na(e_var)
+# 
+#   mu_hat <- mean(dist_df$e_var, na.rm = TRUE)
+#   sigma_hat <- sd(dist_df$e_var, na.rm = TRUE)
+# 
+#   cat("\n============================\n")
+#   cat("GAUSSIAN CHECK [", ev, "]\n", sep = "")
+#   cat("============================\n")
+#   cat("n =", nrow(dist_df), "\n")
+#   cat("mean (mu) =", round(mu_hat, 4), "\n")
+#   cat("sd (sigma) =", round(sigma_hat, 4), "\n")
+# 
+#   if (nrow(dist_df) >= 3 && nrow(dist_df) <= 5000) {
+#     shapiro_out <- shapiro.test(dist_df$e_var)
+#     cat("Shapiro-Wilk p-value =", signif(shapiro_out$p.value, 4), "\n")
+#   } else {
+#     cat("Shapiro-Wilk skipped (requires 3 <= n <= 5000).\n")
+#   }
+# 
+#   print(
+#     ggplot(dist_df, aes(x = e_var)) +
+#       geom_histogram(
+#         aes(y = after_stat(count)),
+#         bins = 35,
+#         fill = "#6AAED6",
+#         color = "white",
+#         alpha = 0.85
+#       ) +
+#       stat_function(
+#         fun = function(x) dnorm(x, mean = mu_hat, sd = sigma_hat) * nrow(dist_df) * (diff(range(dist_df$e_var, na.rm = TRUE)) / 35),
+#         color = "#B2182B",
+#         linewidth = 1
+#       ) +
+#       labs(
+#         title = paste0("[", ev, "] Distribution of e_var with fitted Gaussian"),
+#         subtitle = "Blue bars: observed distribution; red curve: Normal(mu, sigma) fit",
+#         x = energy_label_for(ev),
+#         y = "Count"
+#       ) +
+#       theme_minimal()
+#   )
+# 
+#   print(
+#     ggplot(dist_df, aes(sample = e_var)) +
+#       stat_qq(alpha = 0.35, color = "#333333") +
+#       stat_qq_line(color = "#E6550D", linewidth = 0.8) +
+#       labs(
+#         title = paste0("[", ev, "] Q-Q plot vs Gaussian"),
+#         subtitle = "Points close to the line indicate data are approximately Gaussian",
+#         x = "Theoretical Gaussian quantiles",
+#         y = "Observed quantiles"
+#       ) +
+#       theme_minimal()
+#   )
+# })
 ```
 
 Interpretation guide:
@@ -847,51 +888,51 @@ Interpretation guide:
 12. ANOVA: annual energy variable by year/state/subregion/CBSA
 
 ```{r anova-energy-panel}
-anova_df_by_var <- energy_vars |>
-  set_names() |>
-  map(function(ev) {
-    egrid_panel <- load_egrid_panel(
-      baseline_year = egrid_change_baseline_year,
-      analysis_year = analysis_year,
-      energy_var = ev
-    )
-
-    egrid_panel |>
-      inner_join(
-        geography_df |> select(fips, state, subregion),
-        by = "fips"
-      ) |>
-      left_join(
-        county_cbsa |>
-          transmute(
-            fips,
-            cbsa_factor = case_when(
-              cbsa_type == "Metropolitan" ~ "Metropolitan",
-              cbsa_type == "Micropolitan" ~ "Micropolitan",
-              TRUE ~ "Rural/Neither"
-            )
-          ),
-        by = "fips"
-      ) |>
-      mutate(
-        year = factor(year),
-        state = factor(state),
-        subregion = factor(subregion),
-        cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural/Neither"))
-      ) |>
-      drop_na(e_var, year, state, subregion, cbsa_factor)
-  })
-
-walk(energy_vars, function(ev) {
-  anova_df <- anova_df_by_var[[ev]]
-  anova_model <- lm(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-  anova_results <- anova(anova_model)
-
-  cat("\n============================\n")
-  cat("ANOVA [", ev, "]: e_var ~ year + state + subregion + cbsa_factor\n", sep = "")
-  cat("============================\n")
-  print(anova_results)
-})
+# anova_df_by_var <- energy_vars |>
+#   set_names() |>
+#   map(function(ev) {
+#     egrid_panel <- load_egrid_panel(
+#       baseline_year = egrid_change_baseline_year,
+#       analysis_year = analysis_year,
+#       energy_var = ev
+#     )
+# 
+#     egrid_panel |>
+#       inner_join(
+#         geography_df |> select(fips, state, subregion),
+#         by = "fips"
+#       ) |>
+#       left_join(
+#         county_cbsa |>
+#           transmute(
+#             fips,
+#             cbsa_factor = case_when(
+#               cbsa_type == "Metropolitan" ~ "Metropolitan",
+#               cbsa_type == "Micropolitan" ~ "Micropolitan",
+#               TRUE ~ "Rural/Neither"
+#             )
+#           ),
+#         by = "fips"
+#       ) |>
+#       mutate(
+#         year = factor(year),
+#         state = factor(state),
+#         subregion = factor(subregion),
+#         cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural/Neither"))
+#       ) |>
+#       drop_na(e_var, year, state, subregion, cbsa_factor)
+#   })
+# 
+# walk(energy_vars, function(ev) {
+#   anova_df <- anova_df_by_var[[ev]]
+#   anova_model <- lm(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
+#   anova_results <- anova(anova_model)
+# 
+#   cat("\n============================\n")
+#   cat("ANOVA [", ev, "]: e_var ~ year + state + subregion + cbsa_factor\n", sep = "")
+#   cat("============================\n")
+#   print(anova_results)
+# })
 ```
 
 ```{r tukey-posthoc-state}
