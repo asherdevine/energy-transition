@@ -383,9 +383,23 @@ walk(energy_vars, function(ev) {
 6b. Change in energy variable vs change in median household income
 For each energy variable, we correlate county-level `energy_change` with county-level `median_income_change` (analysis year minus baseline year income).
 ```{r}
+analysis_income_change_by_var <- energy_vars |>
+  set_names() |>
+  map(function(ev) {
+    base_df <- analysis_county_energy_by_var[[ev]] |>
+      drop_na(median_income_change, energy_change)
+
+    if (ev == "renewable_mwh") {
+      base_df |>
+        arrange(desc(energy_change)) |>
+        slice(-(1:4))
+    } else {
+      base_df
+    }
+  })
+
 walk(energy_vars, function(ev) {
-  analysis_income_change <- analysis_county_energy_by_var[[ev]] |>
-    drop_na(median_income_change, energy_change)
+  analysis_income_change <- analysis_income_change_by_var[[ev]]
 
   cat("\n============================\n")
   cat("INCOME-CHANGE CORRELATION [", ev, "]\n", sep = "")
@@ -402,13 +416,13 @@ walk(energy_vars, function(ev) {
 
 ```{r}
 walk(energy_vars, function(ev) {
-  analysis_income_change <- analysis_county_energy_by_var[[ev]] |>
-    drop_na(median_income_change, energy_change)
+  analysis_income_change <- analysis_income_change_by_var[[ev]]
 
   print(
     ggplot(analysis_income_change, aes(x = median_income_change, y = energy_change)) +
       geom_point(alpha = 0.3) +
       geom_smooth(method = "lm", se = TRUE) +
+      scale_y_continuous(labels = scales::label_comma()) +
       labs(
         title = paste0(
           "[",
@@ -428,7 +442,13 @@ walk(energy_vars, function(ev) {
         ),
         y = energy_label_for(ev)
       ) +
-      theme_minimal()
+      theme_minimal() +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line.x = element_line(color = "grey30"),
+        axis.ticks.x = element_line(color = "grey30")
+      )
   )
 })
 ```
@@ -507,7 +527,7 @@ partisan_join <- read_csv("partisanship.csv", show_col_types = FALSE) |>
   filter(YEAR == 2022) |>
   transmute(
     fips = str_pad(as.character(STCOFIPS10), 5, pad = "0"),
-    PARTISAN_INDEX_DEM = as.numeric(PARTISAN_INDEX_DEM)
+    PARTISAN_INDEX_REP = as.numeric(PARTISAN_INDEX_REP)
   )
 
 if (nrow(partisan_join) == 0) {
@@ -518,10 +538,10 @@ walk(energy_vars, function(ev) {
   analysis_energy_change <- analysis_energy_change_by_var[[ev]]
   analysis_partisanship <- analysis_energy_change |>
     left_join(partisan_join, by = "fips") |>
-    drop_na(PARTISAN_INDEX_DEM, energy_change)
+    drop_na(PARTISAN_INDEX_REP, energy_change)
 
   cor_partisan <- cor.test(
-    analysis_partisanship$PARTISAN_INDEX_DEM,
+    analysis_partisanship$PARTISAN_INDEX_REP,
     analysis_partisanship$energy_change,
     method = "pearson"
   )
@@ -534,7 +554,7 @@ walk(energy_vars, function(ev) {
   print(
     ggplot(
       analysis_partisanship,
-      aes(x = PARTISAN_INDEX_DEM, y = energy_change)
+      aes(x = PARTISAN_INDEX_REP, y = energy_change)
     ) +
       geom_point(alpha = 0.35) +
       geom_smooth(method = "lm", se = TRUE) +
@@ -553,7 +573,7 @@ walk(energy_vars, function(ev) {
           analysis_year,
           ")"
         ),
-        x = "PARTISAN_INDEX_DEM (0 to 1)",
+        x = "PARTISAN_INDEX_REP (0 to 1)",
         y = energy_label_for(ev)
       ) +
       theme_minimal()
@@ -632,17 +652,17 @@ if (!exists("partisan_join")) {
     filter(YEAR == 2022) |>
     transmute(
       fips = str_pad(as.character(STCOFIPS10), 5, pad = "0"),
-      partisan_index_dem = as.numeric(PARTISAN_INDEX_DEM)
+      partisan_index_rep = as.numeric(PARTISAN_INDEX_REP)
     )
 }
 
 partisan_join_glmm <- partisan_join |>
   transmute(
     fips,
-    partisan_index_dem = if ("partisan_index_dem" %in% names(partisan_join)) {
-      as.numeric(partisan_index_dem)
+    partisan_index_rep = if ("partisan_index_rep" %in% names(partisan_join)) {
+      as.numeric(partisan_index_rep)
     } else {
-      as.numeric(PARTISAN_INDEX_DEM)
+      as.numeric(PARTISAN_INDEX_REP)
     }
   )
 
@@ -668,7 +688,7 @@ walk(energy_vars, function(ev) {
           cbsa_factor = case_when(
             cbsa_type == "Metropolitan" ~ "Metropolitan",
             cbsa_type == "Micropolitan" ~ "Micropolitan",
-            TRUE ~ "Rural/Neither"
+            TRUE ~ "Rural"
           )
         ),
       by = "fips"
@@ -678,13 +698,13 @@ walk(energy_vars, function(ev) {
     mutate(
       asinh_energy_change = asinh(energy_change),
       state = factor(state),
-      cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural/Neither"))
+      cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural"))
     ) |>
     drop_na(
       asinh_energy_change,
       median_income_aligned,
       median_income_change,
-      partisan_index_dem,
+      partisan_index_rep,
       state,
       cbsa_factor,
       hasplan_score
@@ -709,27 +729,27 @@ walk(energy_vars, function(ev) {
     mutate(
       z_median_income_aligned = as.numeric(scale(median_income_aligned)),
       z_median_income_change = as.numeric(scale(median_income_change)),
-      z_partisan_index_dem = as.numeric(scale(partisan_index_dem))
+      z_partisan_index_rep = as.numeric(scale(partisan_index_rep))
     ) |>
     drop_na(
       z_median_income_aligned,
       z_median_income_change,
-      z_partisan_index_dem
+      z_partisan_index_rep
     )
 
   # Linear model with all fixed effects (no random effects)
   lm_formula <- asinh_energy_change ~
     z_median_income_aligned +
     z_median_income_change +
-    z_partisan_index_dem +
+    z_partisan_index_rep +
     state +
     cbsa_factor +
     hasplan_score
 
   lm_fit <- lm(lm_formula, data = model_df)
 
-  partisan_mean <- mean(model_df$partisan_index_dem, na.rm = TRUE)
-  partisan_sd <- sd(model_df$partisan_index_dem, na.rm = TRUE)
+  partisan_mean <- mean(model_df$partisan_index_rep, na.rm = TRUE)
+  partisan_sd <- sd(model_df$partisan_index_rep, na.rm = TRUE)
 
   partisanship_grid <- c(0, 0.25, 0.5, 0.75, 1)
   partisanship_at <- (partisanship_grid - partisan_mean) / partisan_sd
@@ -738,7 +758,7 @@ walk(energy_vars, function(ev) {
   cat("LINEAR MODEL [", ev, "]: asinh(energy_change)\n", sep = "")
   cat("============================\n")
   cat(
-    "Model: asinh(energy_change) ~ z_median_income_aligned + z_median_income_change + z_partisan_index_dem + state + cbsa_factor + hasplan_score\n"
+    "Model: asinh(energy_change) ~ z_median_income_aligned + z_median_income_change + z_partisan_index_rep + state + cbsa_factor + hasplan_score\n"
   )
   cat("Rows used:", nrow(model_df), "\n")
   print(summary(lm_fit))
@@ -757,23 +777,23 @@ walk(energy_vars, function(ev) {
   print(emm_cbsa_bt)
 
   cat("\n============================\n")
-  cat("EMMEANS (BACK-TRANSFORMED): partisan_index_dem grid [", ev, "]\n", sep = "")
+  cat("EMMEANS (BACK-TRANSFORMED): partisan_index_rep grid [", ev, "]\n", sep = "")
   cat("============================\n")
   emm_partisan <- emmeans(
     lm_fit,
-    ~ z_partisan_index_dem,
-    at = list(z_partisan_index_dem = partisanship_at)
+    ~ z_partisan_index_rep,
+    at = list(z_partisan_index_rep = partisanship_at)
   )
   emm_partisan_bt <- summary(emm_partisan) |>
     as_tibble() |>
     mutate(
-      partisan_index_dem = partisanship_grid,
+      partisan_index_rep = partisanship_grid,
       energy_change_est = sinh(emmean),
       energy_change_lower = sinh(lower.CL),
       energy_change_upper = sinh(upper.CL)
     ) |>
     select(
-      partisan_index_dem,
+      partisan_index_rep,
       energy_change_est,
       energy_change_lower,
       energy_change_upper,
@@ -781,32 +801,93 @@ walk(energy_vars, function(ev) {
     )
   print(emm_partisan_bt)
 
+  emmeans_plot_theme <- theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(color = "grey90", linewidth = 0.35),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(size = 16, face = "plain"),
+      axis.text = element_text(size = 13),
+      axis.line.x = element_line(color = "grey35", linewidth = 0.4),
+      axis.line.y = element_line(color = "grey35", linewidth = 0.4),
+      axis.ticks = element_line(color = "grey28", linewidth = 0.4)
+    )
+
   if (ev == "renewable_mwh") {
+    grad_low <- "#2166AC"
+    grad_high <- "#B2182B"
+
+    partisan_line_seg <- emm_partisan_bt |>
+      mutate(
+        xend = lead(partisan_index_rep),
+        yend = lead(energy_change_est)
+      ) |>
+      filter(!is.na(xend)) |>
+      mutate(x_mid = (partisan_index_rep + xend) / 2)
+
+    seg_ids <- seq_len(nrow(emm_partisan_bt) - 1)
+    partisan_ribbon_poly <- map_dfr(seg_ids, function(i) {
+      tibble(
+        x = c(
+          emm_partisan_bt$partisan_index_rep[i],
+          emm_partisan_bt$partisan_index_rep[i + 1],
+          emm_partisan_bt$partisan_index_rep[i + 1],
+          emm_partisan_bt$partisan_index_rep[i]
+        ),
+        y = c(
+          emm_partisan_bt$energy_change_lower[i],
+          emm_partisan_bt$energy_change_lower[i + 1],
+          emm_partisan_bt$energy_change_upper[i + 1],
+          emm_partisan_bt$energy_change_upper[i]
+        ),
+        seg_id = i,
+        x_mid = mean(c(
+          emm_partisan_bt$partisan_index_rep[i],
+          emm_partisan_bt$partisan_index_rep[i + 1]
+        ))
+      )
+    })
+
     print(
-      ggplot(
-        emm_partisan_bt,
-        aes(x = partisan_index_dem, y = energy_change_est)
-      ) +
-        geom_ribbon(
-          aes(ymin = energy_change_lower, ymax = energy_change_upper),
-          fill = "#9ECAE1",
-          alpha = 0.35
+      ggplot() +
+        geom_polygon(
+          data = partisan_ribbon_poly,
+          aes(x = x, y = y, group = seg_id, fill = x_mid),
+          alpha = 0.45,
+          color = NA
         ) +
-        geom_line(color = "#08519C", linewidth = 0.9) +
-        geom_point(color = "#08519C", size = 2) +
+        scale_fill_gradient(low = grad_low, high = grad_high, limits = c(0, 1), guide = "none") +
+        geom_hline(yintercept = 0, color = "grey40", linewidth = 0.45) +
+        geom_segment(
+          data = partisan_line_seg,
+          aes(
+            x = partisan_index_rep,
+            xend = xend,
+            y = energy_change_est,
+            yend = yend,
+            color = x_mid
+          ),
+          linewidth = 1,
+          lineend = "round"
+        ) +
+        geom_point(
+          data = emm_partisan_bt,
+          aes(x = partisan_index_rep, y = energy_change_est, color = partisan_index_rep),
+          size = 2.8
+        ) +
+        scale_color_gradient(low = grad_low, high = grad_high, limits = c(0, 1), guide = "none") +
         scale_x_continuous(
           limits = c(0, 1),
           breaks = seq(0, 1, by = 0.2),
-          labels = scales::label_number(accuracy = 0.1)
+          labels = scales::label_number(accuracy = 0.1),
+          expand = expansion(mult = c(0.02, 0.02))
         ) +
         scale_y_continuous(labels = scales::label_comma()) +
         labs(
-          title = "Renewables: adjusted energy change vs partisan index",
-          subtitle = "Line/ribbon show back-transformed EMM estimates and 95% CI",
           x = "Partisan index (0 to 1)",
-          y = "Estimated change in renewable generation (MWh)"
+          y = "Renewable change (MWh)"
         ) +
-        theme_minimal()
+        emmeans_plot_theme
     )
   }
 
@@ -816,6 +897,7 @@ walk(energy_vars, function(ev) {
         emm_cbsa_bt,
         aes(x = cbsa_factor, y = energy_change_est, fill = cbsa_factor)
       ) +
+        geom_hline(yintercept = 0, color = "grey40", linewidth = 0.45) +
         geom_col(width = 0.7, show.legend = FALSE) +
         geom_errorbar(
           aes(ymin = energy_change_lower, ymax = energy_change_upper),
@@ -823,13 +905,18 @@ walk(energy_vars, function(ev) {
           linewidth = 0.65
         ) +
         scale_y_continuous(labels = scales::label_comma()) +
-        labs(
-          title = "Coal: adjusted energy change by CBSA category",
-          subtitle = "Bars are back-transformed EMM means; error bars are 95% CI",
-          x = "CBSA category",
-          y = "Estimated change in coal generation (MWh)"
+        scale_fill_manual(
+          values = c(
+            "Metropolitan" = "#ff9900",
+            "Micropolitan" = "#79d8f7",
+            "Rural/Neither" = "#6C3400"
+          )
         ) +
-        theme_minimal()
+        labs(
+          x = "Metro proximity",
+          y = "Coal change (MWh)"
+        ) +
+        emmeans_plot_theme
     )
   }
   
@@ -885,7 +972,7 @@ walk(energy_vars, function(ev) {
   lm_formula_reduced <- asinh_energy_change ~
     z_median_income_aligned +
     z_median_income_change +
-    z_partisan_index_dem +
+    z_partisan_index_rep +
     state +
     hasplan_score
   
@@ -1006,7 +1093,7 @@ Interpretation guide:
 #             cbsa_factor = case_when(
 #               cbsa_type == "Metropolitan" ~ "Metropolitan",
 #               cbsa_type == "Micropolitan" ~ "Micropolitan",
-#               TRUE ~ "Rural/Neither"
+#               TRUE ~ "Rural"
 #             )
 #           ),
 #         by = "fips"
@@ -1015,7 +1102,7 @@ Interpretation guide:
 #         year = factor(year),
 #         state = factor(state),
 #         subregion = factor(subregion),
-#         cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural/Neither"))
+#         cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural"))
 #       ) |>
 #       drop_na(e_var, year, state, subregion, cbsa_factor)
 #   })
