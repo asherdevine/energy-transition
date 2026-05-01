@@ -596,51 +596,51 @@ county_cbsa <- counties_sf |>
     cbsa_type = replace_na(cbsa_type, "Rural")
   )
  
-# walk(energy_vars, function(ev) {
-#   analysis_energy_change <- analysis_energy_change_by_var[[ev]]
-#   analysis_cbsa <- analysis_energy_change |>
-#     left_join(county_cbsa, by = "fips") |>
-#     mutate(
-#       county_type = cbsa_type,
-#       county_type = factor(county_type, levels = c("Metropolitan", "Micropolitan", "Rural"))
-#     )
-# 
-#   cbsa_summary <- analysis_cbsa |>
-#     group_by(county_type) |>
-#     summarise(
-#       n = n(),
-#       mean_change = mean(energy_change, na.rm = TRUE),
-#       sd_change = sd(energy_change, na.rm = TRUE),
-#       .groups = "drop"
-#     )
-# 
-#   print(
-#     ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) +
-#       geom_col(width = 0.7, show.legend = FALSE) +
-#       geom_errorbar(
-#         aes(ymin = mean_change - sd_change, ymax = mean_change + sd_change),
-#         width = 0.18,
-#         linewidth = 0.6
-#       ) +
-#       scale_y_continuous(labels = scales::label_comma()) +
-#       scale_fill_manual(values = c("Metropolitan" = "#E63400", "Micropolitan" = "#FF8B0F", "Rural" = "#6C3400")) +
-#       labs(
-#         title = paste0(
-#           "[",
-#           ev,
-#           "] Mean change in energy variable by county CBSA type, ",
-#           egrid_change_baseline_year,
-#           "–",
-#           analysis_year
-#         ),
-#         subtitle = "Error bars show +/- 1 standard deviation",
-#         x = NULL,
-#         y = energy_label_for(ev),
-#         caption = "CBSA classification from ACS metro/micro geographies via tidycensus."
-#       ) +
-#       theme_minimal()
-#   )
-# })
+walk(energy_vars, function(ev) {
+  analysis_energy_change <- analysis_energy_change_by_var[[ev]]
+  analysis_cbsa <- analysis_energy_change |>
+    left_join(county_cbsa, by = "fips") |>
+    mutate(
+      county_type = cbsa_type,
+      county_type = factor(county_type, levels = c("Metropolitan", "Micropolitan", "Rural"))
+    )
+
+  cbsa_summary <- analysis_cbsa |>
+    group_by(county_type) |>
+    summarise(
+      n = n(),
+      mean_change = mean(energy_change, na.rm = TRUE),
+      sd_change = sd(energy_change, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  print(
+    ggplot(cbsa_summary, aes(x = county_type, y = mean_change, fill = county_type)) +
+      geom_col(width = 0.7, show.legend = FALSE) +
+      geom_errorbar(
+        aes(ymin = mean_change - sd_change, ymax = mean_change + sd_change),
+        width = 0.18,
+        linewidth = 0.6
+      ) +
+      scale_y_continuous(labels = scales::label_comma()) +
+      scale_fill_manual(values = c("Metropolitan" = "#ff9900", "Micropolitan" = "#79d8f7", "Rural" = "#6C3400")) +
+      labs(
+        title = paste0(
+          "[",
+          ev,
+          "] Mean change in energy variable by county CBSA type, ",
+          egrid_change_baseline_year,
+          "–",
+          analysis_year
+        ),
+        subtitle = "",
+        x = "Metro Proximity",
+        y = energy_label_for(ev),
+        caption = "Error bars show +/- 1 standard deviation"
+      ) +
+      theme_minimal()
+  )
+})
 ```
 
 10. Linear model on asinh-transformed `energy_change`
