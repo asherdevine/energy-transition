@@ -57,9 +57,13 @@ egrid_change_baseline_year <- 2012
 #  - "COAL":          change in generation from coal (MWh) (plgenacl)
 energy_vars <- c("renewable_mwh", "co2_tons", "COAL")
 
+# EXCLUDED COUNTIES (outliers for renewable_mwh analysis)
+# These 4 counties are removed from all analyses due to extreme renewable energy increases
+excluded_counties <- c("47143", "01083", "42079", "47065")
+
 energy_label_for <- function(energy_var) {
   if (energy_var == "renewable_mwh") {
-    "Change in generation from renewables (MWh)"
+    "Change in renewable energy generation (MWh)"
   } else if (energy_var == "co2_tons") {
     "Change in annual CO2 emissions (tons)"
   } else {
@@ -75,7 +79,11 @@ We load selected geography's county list and filter by subregion.
 geography_df <- read_csv(geography_file) |>
   clean_names() |>
 #  filter(subregion == target_subregion) |>
-  mutate(fips = str_pad(fips, 5, pad = "0"))
+  mutate(fips = str_pad(fips, 5, pad = "0")) |>
+  filter(!fips %in% excluded_counties)
+
+cat("Excluded counties from analysis:", paste(excluded_counties, collapse = ", "), "\n")
+cat("Remaining counties in geography_df:", nrow(geography_df), "\n")
 ```
 
 3. Income Data (ACS)
@@ -386,16 +394,8 @@ For each energy variable, we correlate county-level `energy_change` with county-
 analysis_income_change_by_var <- energy_vars |>
   set_names() |>
   map(function(ev) {
-    base_df <- analysis_county_energy_by_var[[ev]] |>
+    analysis_county_energy_by_var[[ev]] |>
       drop_na(median_income_change, energy_change)
-
-    if (ev == "renewable_mwh") {
-      base_df |>
-        arrange(desc(energy_change)) |>
-        slice(-(1:4))
-    } else {
-      base_df
-    }
   })
 
 walk(energy_vars, function(ev) {
@@ -493,7 +493,7 @@ walk(energy_vars, function(ev) {
       geom_sf(data = counties_map_change, aes(fill = energy_change), color = "grey35", linewidth = 0.08) +
       geom_sf(data = geography_outline, fill = NA, color = "grey20", linewidth = 0.4) +
       scale_fill_gradient2(
-        low = "#0C5000",
+        low = "#0C5000", #swap low and high colors for renewable map
         mid = "#f7f7f7",
         high = "#7F2B0A",
         midpoint = 0,
@@ -573,7 +573,7 @@ walk(energy_vars, function(ev) {
           analysis_year,
           ")"
         ),
-        x = "PARTISAN_INDEX_REP (0 to 1)",
+        x = "Republican Partisanship (Index 0 to 1)",
         y = energy_label_for(ev)
       ) +
       theme_minimal()
@@ -984,8 +984,11 @@ walk(energy_vars, function(ev) {
   print(f_test)
   
   cat("\n---\n")
-
+  
 })
+
+
+
 ```
 
 10a. Post-hoc tests summary
@@ -993,6 +996,188 @@ walk(energy_vars, function(ev) {
 ```{r posthoc-summary}
 # cat("Post-hoc tests complete for all energy variables.\n")
 # cat("See chunk 10 output for Tukey HSD pairwise comparisons and F-tests for cbsa_factor.\n")
+```
+
+10b. Distribution of asinh_energy_change and residuals
+
+```{r asinh-energy-dist-residuals}
+walk(energy_vars, function(ev) {
+  # Get model_df from analysis_county_energy_by_var (recreate minimal needed data)
+  model_df <- analysis_county_energy_by_var[[ev]] |>
+    left_join(
+      geography_df |> select(fips, state),
+      by = "fips"
+    ) |>
+    left_join(
+      county_cbsa |>
+        transmute(
+          fips,
+          cbsa_factor = case_when(
+            cbsa_type == "Metropolitan" ~ "Metropolitan",
+            cbsa_type == "Micropolitan" ~ "Micropolitan",
+            TRUE ~ "Rural"
+          )
+        ),
+      by = "fips"
+    ) |>
+    left_join(
+      partisan_join |> transmute(fips, partisan_index_rep = as.numeric(PARTISAN_INDEX_REP)),
+      by = "fips"
+    ) |>
+    left_join(hasplan_df, by = "fips") |>
+    mutate(
+      asinh_energy_change = asinh(energy_change),
+      state = factor(state),
+      cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural"))
+    ) |>
+    drop_na(asinh_energy_change, median_income_aligned, median_income_change, 
+            partisan_index_rep, state, cbsa_factor, hasplan_score)
+  
+  model_df <- model_df |>
+    mutate(
+      z_median_income_aligned = as.numeric(scale(median_income_aligned)),
+      z_median_income_change = as.numeric(scale(median_income_change)),
+      z_partisan_index_rep = as.numeric(scale(partisan_index_rep))
+    ) |>
+    drop_na(z_median_income_aligned, z_median_income_change, z_partisan_index_rep)
+  
+  # Fit the same model as chunk 10
+  lm_formula <- asinh_energy_change ~
+    z_median_income_aligned +
+    z_median_income_change +
+    z_partisan_index_rep +
+    state +
+    cbsa_factor +
+    hasplan_score
+  
+  lm_fit <- lm(lm_formula, data = model_df)
+  
+  # Calculate residuals
+  model_df$residuals <- residuals(lm_fit)
+  model_df$fitted <- fitted(lm_fit)
+  
+  # Observed asinh_energy_change stats
+  mu_hat <- mean(model_df$asinh_energy_change, na.rm = TRUE)
+  sigma_hat <- sd(model_df$asinh_energy_change, na.rm = TRUE)
+  
+  cat("\n============================\n")
+  cat("ASINH_ENERGY_CHANGE DISTRIBUTION [", ev, "]\n", sep = "")
+  cat("============================\n")
+  cat("n =", nrow(model_df), "\n")
+  cat("Observed mean =", round(mu_hat, 4), "\n")
+  cat("Observed sd =", round(sigma_hat, 4), "\n")
+  
+  # Shapiro-Wilk test (if n <= 5000)
+  if (nrow(model_df) >= 3 && nrow(model_df) <= 5000) {
+    shapiro_obs <- shapiro.test(model_df$asinh_energy_change)
+    cat("Shapiro-Wilk p-value (observed):", signif(shapiro_obs$p.value, 4), "\n")
+  } else {
+    cat("Shapiro-Wilk skipped (requires 3 <= n <= 5000)\n")
+  }
+  
+  # Histogram: observed vs theoretical Gaussian
+  print(
+    ggplot(model_df, aes(x = asinh_energy_change)) +
+      geom_histogram(
+        aes(y = after_stat(density)),
+        bins = 30,
+        fill = "#6AAED6",
+        color = "white",
+        alpha = 0.85
+      ) +
+      stat_function(
+        fun = dnorm,
+        args = list(mean = mu_hat, sd = sigma_hat),
+        color = "#B2182B",
+        linewidth = 1.2
+      ) +
+      labs(
+        title = paste0("[", ev, "] asinh_energy_change vs Theoretical Gaussian"),
+        subtitle = paste0("Blue bars: observed distribution; red curve: N(", round(mu_hat, 2), ", ", round(sigma_hat, 2), ")"),
+        x = "asinh(energy_change)",
+        y = "Density"
+      ) +
+      theme_minimal()
+  )
+  
+  # Q-Q plot for observed
+  print(
+    ggplot(model_df, aes(sample = asinh_energy_change)) +
+      stat_qq(alpha = 0.5, color = "#333333") +
+      stat_qq_line(color = "#E6550D", linewidth = 0.8) +
+      labs(
+        title = paste0("[", ev, "] Q-Q plot: asinh_energy_change vs Gaussian"),
+        x = "Theoretical quantiles",
+        y = "Observed quantiles"
+      ) +
+      theme_minimal()
+  )
+  
+  # Residuals analysis
+  cat("\n============================\n")
+  cat("RESIDUALS ANALYSIS [", ev, "]\n", sep = "")
+  cat("============================\n")
+  cat("Residuals mean =", round(mean(model_df$residuals), 6), "\n")
+  cat("Residuals sd =", round(sd(model_df$residuals), 4), "\n")
+  
+  # Shapiro-Wilk on residuals
+  if (nrow(model_df) >= 3 && nrow(model_df) <= 5000) {
+    shapiro_resid <- shapiro.test(model_df$residuals)
+    cat("Shapiro-Wilk p-value (residuals):", signif(shapiro_resid$p.value, 4), "\n")
+  }
+  
+  # Histogram of residuals
+  print(
+    ggplot(model_df, aes(x = residuals)) +
+      geom_histogram(
+        aes(y = after_stat(density)),
+        bins = 30,
+        fill = "#7FC97F",
+        color = "white",
+        alpha = 0.85
+      ) +
+      stat_function(
+        fun = dnorm,
+        args = list(mean = 0, sd = sd(model_df$residuals)),
+        color = "#B2182B",
+        linewidth = 1.2
+      ) +
+      labs(
+        title = paste0("[", ev, "] Residuals Distribution"),
+        subtitle = paste0("Mean = 0, SD = ", round(sd(model_df$residuals), 2)),
+        x = "Residuals",
+        y = "Density"
+      ) +
+      theme_minimal()
+  )
+  
+  # Q-Q plot for residuals
+  print(
+    ggplot(model_df, aes(sample = residuals)) +
+      stat_qq(alpha = 0.5, color = "#333333") +
+      stat_qq_line(color = "#E6550D", linewidth = 0.8) +
+      labs(
+        title = paste0("[", ev, "] Q-Q plot: Residuals vs Gaussian"),
+        x = "Theoretical quantiles",
+        y = "Observed residuals"
+      ) +
+      theme_minimal()
+  )
+  
+  # Fitted vs Residuals plot
+  print(
+    ggplot(model_df, aes(x = fitted, y = residuals)) +
+      geom_point(alpha = 0.5) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+      geom_smooth(method = "loess", se = FALSE, color = "blue") +
+      labs(
+        title = paste0("[", ev, "] Fitted vs Residuals"),
+        x = "Fitted values (asinh scale)",
+        y = "Residuals"
+      ) +
+      theme_minimal()
+  )
+})
 ```
 
 11. Distribution check: `e_var` and fitted Gaussian model
