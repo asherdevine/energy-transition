@@ -1,25 +1,74 @@
 ---
-title: "ashers census project"
+title: "Energy Transition Analysis"
 output: html_document
-date: "2026-03-23"
+author: "Asher Devine"
+date: "2026-05-06"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Overview
+#### Overview
 
-Notes:
--change census api key install = to TRUE if you want to install my API key. or use your own idk if it matters
--the geography csv just provides a list of counties
--right now it's looking at plant annual CO2 emissions (`plco2an`) summed to a county level
--you can't have the excel file open while the program is looking at it (workbooks live in the `egrid files` folder)
+This R Markdown script analyzes the relationship between socioeconomic factors (income, partisanship) and energy production changes at the U.S. county level. It examines how renewable energy, CO2 emissions, and coal generation have changed over time and what factors correlate with those changes.
+
+#### What This Script Does
+
+- Combines Census/ACS income data, eGRID energy data, partisanship scores, CBSA (metro/micro/rural) classifications, and policy plan data
+- Analyzes counties based on a configurable geography file
+- Runs linear models with fixed effects for state, CBSA type, and policy plans
+- Produces choropleth maps, scatter plots, correlation analyses, and distribution checks
+- Excludes outlier counties (configurable in setup)
+
+#### Required Data Files
+
+Place these files in the working directory before running:
+
+| File | Description |
+|------|-------------|
+| `geography.csv` | County FIPS codes to include in analysis (columns: fips, state) |
+| `partisanship.csv` | County-level partisan index (columns: YEAR, STCOFIPS10, PARTISAN_INDEX_REP) |
+| `hasplan.csv` | County-level policy plan scores (columns: fips, score) |
+| `egrid files/eGRID{year}_data.xlsx` | EPA eGRID plant-level data (one file per year) |
+
+#### Key Configuration Variables
+
+All configurable settings are in Section 1 (Setup):
+
+- `geography_file`: CSV file containing county list (default: "geography.csv")
+- `analysis_year`: Year for ACS and eGRID analysis (default: 2022)
+- `egrid_change_baseline_year`: Baseline year for change calculations (default: 2012)
+- `energy_vars`: Which energy variables to analyze (default: renewable_mwh, co2_tons, COAL)
+- `excluded_counties`: FIPS codes to exclude from all analyses (outliers)
+
+#### First-Time Setup
+
+1. Install required packages (uncomment line 15 in Setup chunk)
+2. Obtain Census API key from http://api.census.gov/data/key_signup.html
+3. Run `census_api_key("your_key", install = TRUE)` once
+4. Ensure all data files are in place
+5. Configure variables in Section 1 as needed
+6. Knit the document
+
+#### Output
+
+- HTML report with all analyses, plots, and model results
+- Console output with model summaries, correlations, and diagnostics
+- Counties excluded from analysis are reported in the output
+
+#### Notes
+
+- eGRID Excel files must be closed while running (R cannot read open workbooks)
+- Clear `census_cache` object or restart R if changing years
+- Analysis requires stable internet connection for Census API calls
+- Some chunks may take several minutes to run due to spatial operations
 
 
-1. Setup
-
+## 1. Setup
 ```{r libraries, message=FALSE, warning=FALSE}
+#install.packages(c("tidycensus", "tidyverse", "sf", "tigris", "readxl", "janitor", "spdep", "ggplot2", "lme4", "emmeans"))
+
 library(tidycensus)
 library(tidyverse)
 library(sf)
@@ -33,11 +82,6 @@ library(emmeans)
 
 options(tigris_use_cache = TRUE)
 
-# CONFIGURE GEOGRAPHY HERE
-# Options: "arc" (Appalachian Regional Commission), 
-#          "msa" (Metropolitan Statistical Areas), 
-#          "state" (individual states), etc.
-#geography_type <- "subregions"
 geography_file <- "geography.csv"  # File with county list for selected geography
 
 # CONFIGURE SUBREGION HERE
@@ -67,13 +111,13 @@ energy_label_for <- function(energy_var) {
   } else if (energy_var == "co2_tons") {
     "Change in annual CO2 emissions (tons)"
   } else {
-    "Change in generation from coal (MWh)"
+    "Change in coal energy generation (MWh)"
   }
 }
 
 ```
 
-2. Load Geography Data
+## 2. Load Geography Data
 We load selected geography's county list and filter by subregion.
 ```{r}
 geography_df <- read_csv(geography_file) |>
@@ -86,7 +130,7 @@ cat("Excluded counties from analysis:", paste(excluded_counties, collapse = ", "
 cat("Remaining counties in geography_df:", nrow(geography_df), "\n")
 ```
 
-3. Income Data (ACS)
+## 3. Income Data (ACS)
 We use median household income (B19013_001).
 Why two versions?
 Aligned (analysis_year): Matches eGRID data → best for correlation
@@ -180,9 +224,9 @@ income_lagged_app <- income_lagged |>
   inner_join(geography_df, by = c("GEOID" = "fips"))
 ```
 
-4. eGRID Data (Energy Change)
+## 4. eGRID Data (Energy Change)
 We load plant-level eGRID data for the baseline and analysis years, aggregate to county, and compute change for each entry in `energy_vars`. Workbooks live in `egrid files/` as `eGRID{year}_data.xlsx`. The plant sheet is either `PLNT{yy}` or `EGRDPLNT{yy}` (`yy` = last two digits of the year).
-```{r}
+```{r, warning=FALSE}
 load_egrid_year <- function(analysis_year, baseline_year, energy_var = c("renewable_mwh", "co2_tons", "COAL")) {
   energy_var <- match.arg(energy_var)
 
@@ -275,38 +319,9 @@ county_energy_by_var <- energy_vars |>
   set_names() |>
   map(function(ev) load_egrid_year(analysis_year, egrid_change_baseline_year, ev))
 
-# County-year panel across all available eGRID years in analysis period.
-load_egrid_panel <- function(baseline_year, analysis_year, energy_var = c("renewable_mwh", "co2_tons", "COAL")) {
-  energy_var <- match.arg(energy_var)
-
-  egrid_files <- list.files(
-    path = "egrid files",
-    pattern = "^eGRID[0-9]{4}_data\\.xlsx$",
-    full.names = FALSE
-  )
-
-  available_years <- egrid_files |>
-    str_extract("[0-9]{4}") |>
-    as.integer() |>
-    discard(is.na) |>
-    sort()
-
-  years_in_period <- available_years[available_years >= baseline_year & available_years <= analysis_year]
-
-  if (length(years_in_period) == 0) {
-    stop(
-      "No eGRID files found for years between ", baseline_year, " and ", analysis_year, "."
-    )
-  }
-
-  map_dfr(years_in_period, function(y) {
-    load_egrid_year(y, y, energy_var) |>
-      transmute(fips, year = y, e_var = energy_end)
-  })
-}
 ```
 
-5. Build Analysis Datasets
+## 5. Build Analysis Datasets
 For each energy variable, we use the corresponding `county_energy` (with `energy_change`) as the base dataset, then join income data.
 ```{r}
 analysis_county_energy_by_var <- county_energy_by_var |>
@@ -331,7 +346,7 @@ analysis_energy_change_by_var <- analysis_county_energy_by_var |>
 
 ```
 
-6. Change in energy variable vs median household income
+## 6. Change in energy variable vs median household income
 For each entry in `energy_vars`, we take that eGRID metric at `egrid_change_baseline_year` and at `analysis_year`, compute county-level change inside `load_egrid_year()`, and work with the resulting `energy_change` column.
 ```{r}
 walk(energy_vars, function(ev) {
@@ -388,7 +403,7 @@ walk(energy_vars, function(ev) {
 })
 ```
 
-6b. Change in energy variable vs change in median household income
+## 6b. Change in energy variable vs change in median household income
 For each energy variable, we correlate county-level `energy_change` with county-level `median_income_change` (analysis year minus baseline year income).
 ```{r}
 analysis_income_change_by_var <- energy_vars |>
@@ -453,7 +468,7 @@ walk(energy_vars, function(ev) {
 })
 ```
 
-7. Choropleth: change in selected energy variable
+## 7. Choropleth: change in selected energy variable
 Fill is `energy_change` from `analysis_energy_change_by_var[[ev]]` for each `ev` in `energy_vars`. A light basemap of all counties in the selected states is drawn underneath for surrounding context.
 
 ```{r map-nf-share-change-build}
@@ -493,9 +508,9 @@ walk(energy_vars, function(ev) {
       geom_sf(data = counties_map_change, aes(fill = energy_change), color = "grey35", linewidth = 0.08) +
       geom_sf(data = geography_outline, fill = NA, color = "grey20", linewidth = 0.4) +
       scale_fill_gradient2(
-        low = "#0C5000", #swap low and high colors for renewable map
+        low = ifelse(ev == "renewable_mwh", "#7F2B0A", "#0C5000"),  # swapped for renewables
         mid = "#f7f7f7",
-        high = "#7F2B0A",
+        high = ifelse(ev == "renewable_mwh", "#0C5000", "#7F2B0A"),  # swapped for renewables
         midpoint = 0,
         name = paste0("Change in \n", ev),
         labels = scales::label_comma()
@@ -519,7 +534,7 @@ walk(energy_vars, function(ev) {
 ```
 
 
-8. Partisanship vs change in selected energy variable
+## 8. Partisanship vs change in selected energy variable
 
 ```{r partisanship-join-and-plot}
 # Read partisanship directly from CSV and keep 2022 county-level values.
@@ -581,7 +596,7 @@ walk(energy_vars, function(ev) {
 })
 ```
 
-9. Metro vs micro vs rural (Census CBSA delineations)
+## 9. Metro vs micro vs rural (Census CBSA delineations)
 
 ```{r metro-micro-mean-sd-plot}
 # CBSA polygons from ACS (loaded once in section 3, cached in census_cache)
@@ -643,7 +658,7 @@ walk(energy_vars, function(ev) {
 })
 ```
 
-10. Linear model on asinh-transformed `energy_change`
+## 10. Linear model on asinh-transformed `energy_change`
 
 ```{r glmm-energy-change-asinh}
 # Ensure partisanship join exists even if section 8 has not run yet.
@@ -991,14 +1006,8 @@ walk(energy_vars, function(ev) {
 
 ```
 
-10a. Post-hoc tests summary
 
-```{r posthoc-summary}
-# cat("Post-hoc tests complete for all energy variables.\n")
-# cat("See chunk 10 output for Tukey HSD pairwise comparisons and F-tests for cbsa_factor.\n")
-```
-
-10b. Distribution of asinh_energy_change and residuals
+## 11. Distribution of asinh_energy_change and residuals
 
 ```{r asinh-energy-dist-residuals}
 walk(energy_vars, function(ev) {
@@ -1178,234 +1187,4 @@ walk(energy_vars, function(ev) {
       theme_minimal()
   )
 })
-```
-
-11. Distribution check: `e_var` and fitted Gaussian model
-
-```{r evar-gaussian-check}
-# walk(energy_vars, function(ev) {
-#   egrid_panel <- load_egrid_panel(
-#     baseline_year = egrid_change_baseline_year,
-#     analysis_year = analysis_year,
-#     energy_var = ev
-#   )
-# 
-#   dist_df <- egrid_panel |>
-#     drop_na(e_var)
-# 
-#   mu_hat <- mean(dist_df$e_var, na.rm = TRUE)
-#   sigma_hat <- sd(dist_df$e_var, na.rm = TRUE)
-# 
-#   cat("\n============================\n")
-#   cat("GAUSSIAN CHECK [", ev, "]\n", sep = "")
-#   cat("============================\n")
-#   cat("n =", nrow(dist_df), "\n")
-#   cat("mean (mu) =", round(mu_hat, 4), "\n")
-#   cat("sd (sigma) =", round(sigma_hat, 4), "\n")
-# 
-#   if (nrow(dist_df) >= 3 && nrow(dist_df) <= 5000) {
-#     shapiro_out <- shapiro.test(dist_df$e_var)
-#     cat("Shapiro-Wilk p-value =", signif(shapiro_out$p.value, 4), "\n")
-#   } else {
-#     cat("Shapiro-Wilk skipped (requires 3 <= n <= 5000).\n")
-#   }
-# 
-#   print(
-#     ggplot(dist_df, aes(x = e_var)) +
-#       geom_histogram(
-#         aes(y = after_stat(count)),
-#         bins = 35,
-#         fill = "#6AAED6",
-#         color = "white",
-#         alpha = 0.85
-#       ) +
-#       stat_function(
-#         fun = function(x) dnorm(x, mean = mu_hat, sd = sigma_hat) * nrow(dist_df) * (diff(range(dist_df$e_var, na.rm = TRUE)) / 35),
-#         color = "#B2182B",
-#         linewidth = 1
-#       ) +
-#       labs(
-#         title = paste0("[", ev, "] Distribution of e_var with fitted Gaussian"),
-#         subtitle = "Blue bars: observed distribution; red curve: Normal(mu, sigma) fit",
-#         x = energy_label_for(ev),
-#         y = "Count"
-#       ) +
-#       theme_minimal()
-#   )
-# 
-#   print(
-#     ggplot(dist_df, aes(sample = e_var)) +
-#       stat_qq(alpha = 0.35, color = "#333333") +
-#       stat_qq_line(color = "#E6550D", linewidth = 0.8) +
-#       labs(
-#         title = paste0("[", ev, "] Q-Q plot vs Gaussian"),
-#         subtitle = "Points close to the line indicate data are approximately Gaussian",
-#         x = "Theoretical Gaussian quantiles",
-#         y = "Observed quantiles"
-#       ) +
-#       theme_minimal()
-#   )
-# })
-```
-
-Interpretation guide:
-- Histogram + red Gaussian curve: close overlap through center and tails supports a Gaussian model.
-- Q-Q plot: points near the line (especially in both tails) support Gaussian assumptions.
-- Shapiro-Wilk p-value: a large p-value (commonly > 0.05) means you do not have strong evidence against Gaussianity; a very small p-value suggests non-Gaussian behavior.
-- For ANOVA specifically, the normality assumption is mainly about model residuals, so this is an initial data-level check.
-
-12. ANOVA: annual energy variable by year/state/subregion/CBSA
-
-```{r anova-energy-panel}
-# anova_df_by_var <- energy_vars |>
-#   set_names() |>
-#   map(function(ev) {
-#     egrid_panel <- load_egrid_panel(
-#       baseline_year = egrid_change_baseline_year,
-#       analysis_year = analysis_year,
-#       energy_var = ev
-#     )
-# 
-#     egrid_panel |>
-#       inner_join(
-#         geography_df |> select(fips, state, subregion),
-#         by = "fips"
-#       ) |>
-#       left_join(
-#         county_cbsa |>
-#           transmute(
-#             fips,
-#             cbsa_factor = case_when(
-#               cbsa_type == "Metropolitan" ~ "Metropolitan",
-#               cbsa_type == "Micropolitan" ~ "Micropolitan",
-#               TRUE ~ "Rural"
-#             )
-#           ),
-#         by = "fips"
-#       ) |>
-#       mutate(
-#         year = factor(year),
-#         state = factor(state),
-#         subregion = factor(subregion),
-#         cbsa_factor = factor(cbsa_factor, levels = c("Metropolitan", "Micropolitan", "Rural"))
-#       ) |>
-#       drop_na(e_var, year, state, subregion, cbsa_factor)
-#   })
-# 
-# walk(energy_vars, function(ev) {
-#   anova_df <- anova_df_by_var[[ev]]
-#   anova_model <- lm(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-#   anova_results <- anova(anova_model)
-# 
-#   cat("\n============================\n")
-#   cat("ANOVA [", ev, "]: e_var ~ year + state + subregion + cbsa_factor\n", sep = "")
-#   cat("============================\n")
-#   print(anova_results)
-# })
-```
-
-```{r tukey-posthoc-state}
-# walk(energy_vars, function(ev) {
-#   anova_df <- anova_df_by_var[[ev]]
-# 
-#   anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-#   tukey_state <- TukeyHSD(anova_model_aov, which = "state")
-# 
-#   cat("\n============================\n")
-#   cat("TUKEY POST HOC: state [", ev, "]\n", sep = "")
-#   cat("============================\n")
-#   print(tukey_state)
-# 
-#   tukey_state_tbl <- as.data.frame(tukey_state$state) |>
-#     rownames_to_column("comparison") |>
-#     as_tibble() |>
-#     rename(
-#       diff = diff,
-#       conf_low = lwr,
-#       conf_high = upr,
-#       p_adj = `p adj`
-#     ) |>
-#     arrange(p_adj)
-# 
-#   sig_tukey_state <- tukey_state_tbl |>
-#     filter(p_adj < 0.05)
-# 
-#   cat("\nSignificant state pair differences (Tukey-adjusted p < 0.05):\n")
-#   if (nrow(sig_tukey_state) == 0) {
-#     cat("None at p < 0.05.\n")
-#   } else {
-#     print(sig_tukey_state)
-#   }
-# 
-#   plot(tukey_state, las = 1)
-#   title(main = paste0("Tukey HSD (state): ", ev))
-# })
-```
-
-```{r tukey-posthoc-cbsa}
-# walk(energy_vars, function(ev) {
-#   anova_df <- anova_df_by_var[[ev]]
-# 
-#   anova_model_aov <- aov(e_var ~ year + state + subregion + cbsa_factor, data = anova_df)
-#   tukey_cbsa <- TukeyHSD(anova_model_aov, which = "cbsa_factor")
-# 
-#   cat("\n============================\n")
-#   cat("TUKEY POST HOC: cbsa_factor [", ev, "]\n", sep = "")
-#   cat("============================\n")
-#   print(tukey_cbsa)
-# 
-#   tukey_cbsa_tbl <- as.data.frame(tukey_cbsa$cbsa_factor) |>
-#     rownames_to_column("comparison") |>
-#     as_tibble() |>
-#     rename(
-#       diff = diff,
-#       conf_low = lwr,
-#       conf_high = upr,
-#       p_adj = `p adj`
-#     ) |>
-#     arrange(p_adj)
-# 
-#   sig_tukey_cbsa <- tukey_cbsa_tbl |>
-#     filter(p_adj < 0.05)
-# 
-#   cat("\nSignificant cbsa_factor pair differences (Tukey-adjusted p < 0.05):\n")
-#   if (nrow(sig_tukey_cbsa) == 0) {
-#     cat("None at p < 0.05.\n")
-#   } else {
-#     print(sig_tukey_cbsa)
-#   }
-# 
-#   plot(tukey_cbsa, las = 1)
-#   title(main = paste0("Tukey HSD (cbsa_factor): ", ev))
-# })
-```
-
-11. Panel model: county and year fixed effects (clustered SE)
-
-```{r panel-fe-model}
-# panel_df <- anova_df_by_var[[energy_vars[1]]] |>
-#   mutate(
-#     county_id = factor(fips),
-#     year = factor(year)
-#   )
-# 
-# fe_model <- lm(e_var ~ year + county_id, data = panel_df)
-# 
-# if (requireNamespace("sandwich", quietly = TRUE) && requireNamespace("lmtest", quietly = TRUE)) {
-#   vcov_cluster_county <- sandwich::vcovCL(fe_model, cluster = ~ fips)
-#   fe_results_clustered <- lmtest::coeftest(fe_model, vcov. = vcov_cluster_county)
-# 
-#   cat("\n============================\n")
-#   cat("PANEL FE MODEL: e_var ~ year + county fixed effects (SE clustered by county)\n")
-#   cat("============================\n")
-#   print(fe_results_clustered)
-# } else {
-#   cat("\n============================\n")
-#   cat("PANEL FE MODEL: e_var ~ year + county fixed effects\n")
-#   cat("============================\n")
-#   cat("Packages 'sandwich' and/or 'lmtest' are not installed; showing default lm() summary.\n")
-#   print(summary(fe_model))
-# }
-# 
-# cat("\nNote: With county fixed effects, time-invariant county attributes (state/subregion/CBSA) are absorbed and not separately identified.\n")
 ```

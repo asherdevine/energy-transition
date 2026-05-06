@@ -9,6 +9,7 @@ fips,county,state,score,subregion,total_gen
 1051,Elmore,Alabama,0,Southern,1770394
 1055,Etowah,Alabama,0,Southern,
 1065,Hale,Alabama,2,Southern,27413
+1071,Jackson,,0,,
 1073,Jefferson,Alabama,1,Southern,20529081
 1077,Lauderdale,Alabama,0,Southern,2952016.001
 1079,Lawrence,Alabama,1,Southern,1611098.997
@@ -24,6 +25,7 @@ fips,county,state,score,subregion,total_gen
 1127,Walker,Alabama,1,Southern,387891
 13013,Barrow,Georgia,1,Southern,47700
 13015,Bartow,Georgia,2,Southern,9621283
+13097,Douglas,,1,,
 13105,Elbert,Georgia,0,Southern,596355
 13111,Fannin,Georgia,0,Southern,39144
 13115,Floyd,Georgia,2,Southern,424880.898
@@ -42,6 +44,7 @@ fips,county,state,score,subregion,total_gen
 13291,Union,Georgia,0,Southern,50932
 21049,Clark,Kentucky,0,Central,597536
 21065,Estill,Kentucky,1,Central,9685
+21079,,,1,,
 21089,Greenup,Kentucky,2,Central,15675
 21125,Laurel,Kentucky,0,Central,104436
 21127,Lawrence,Kentucky,1,Central,1112180
@@ -93,12 +96,16 @@ fips,county,state,score,subregion,total_gen
 37171,Surry,North Carolina,1,South Central,33936
 37173,Swain,North Carolina,0,South Central,1328369.999
 37197,Yadkin,North Carolina,1,South Central,38392
+39001,Adams,,2,,
 39007,Ashtabula,Ohio,1,Northern,193957
+39013,Belmont,,1,,
 39015,Brown,Ohio,0,North Central,204656.001
 39019,Carroll,Ohio,1,Northern,4771737
 39025,Clermont,Ohio,2,North Central,4575243
 39029,Columbiana,Ohio,0,Northern,2198702
+39031,,,0,,
 39053,Gallia,Ohio,1,North Central,18841008
+39079,Jackson,,0,,
 39081,Jefferson,Ohio,0,Northern,14722996
 39087,Lawrence,Ohio,0,North Central,9510071
 39099,Mahoning,Ohio,2,Northern,157587.004
@@ -122,6 +129,7 @@ fips,county,state,score,subregion,total_gen
 42027,Centre,Pennsylvania,1,Northern,68399.69
 42031,Clarion,Pennsylvania,2,Northern,66351.999
 42033,Clearfield,Pennsylvania,1,Northern,634973.001
+42035,Clinton,,0,,
 42047,Elk,Pennsylvania,1,Northern,205504
 42049,Erie,Pennsylvania,2,Northern,32226
 42051,Fayette,Pennsylvania,0,Northern,5320534
@@ -162,6 +170,7 @@ fips,county,state,score,subregion,total_gen
 47027,Clay,Tennessee,0,Central,145269
 47041,De Kalb,Tennessee,1,South Central,387940.999
 47051,Franklin,Tennessee,0,South Central,42973
+47059,Greene,,2,,
 47065,Hamilton,Tennessee,2,South Central,18361088
 47067,Hancock,Tennessee,0,South Central,
 47073,Hawkins,Tennessee,2,South Central,4015831
@@ -192,6 +201,7 @@ fips,county,state,score,subregion,total_gen
 51167,Russell,Virginia,0,Central,133136
 51191,Washington + Bristol city,Virginia,2,South Central,58017
 51195,Wise + Norton city,Virginia,2,Central,953703
+51197,Wythe,,1,,
 54001,Barbour,West Virginia,1,North Central,181816
 54003,Berkeley,West Virginia,2,North Central,6288
 54019,Fayette,West Virginia,1,North Central,516227.998
@@ -207,6 +217,7 @@ fips,county,state,score,subregion,total_gen
 54061,Monongalia,West Virginia,0,North Central,10760296
 54067,Nicholas,West Virginia,1,North Central,139455
 54073,Pleasants,West Virginia,0,North Central,9100804
+54077,Preston,,0,,
 54079,Putnam,West Virginia,1,North Central,12115502
 54081,Raleigh,West Virginia,1,North Central,10166
 54093,Tucker,West Virginia,1,North Central,91219
